@@ -24,7 +24,7 @@ export:
   program_html program_text
   meta:
     expr_section section_of
-    sections_in_order first_string_in sec_label program_name hymns_in join
+    sections_in_order sections_by_index section_index index_less first_string_in sec_label program_name hymns_in join
 
 // ---------------------------------------------------------------------
 // the `section` coordinate -- an ordered id path (like `name`): nesting
@@ -88,6 +88,26 @@ meta:
       if s.length() > 0 && !(acc.filter(~keep: fun (x): x == s).length() > 0)
       | acc ++ [s]
       | acc
+  // lexicographic `<` on index lists (a shorter prefix sorts first)
+  fun index_less(a, b):
+    match [a, b]
+    | [[], []]: #false
+    | [[], _]: #true
+    | [_, []]: #false
+    | [[ah, ar, ...], [bh, br, ...]]:
+        cond
+        | ah < bh: #true
+        | ah > bh: #false
+        | ~else: index_less([ar, ...], [br, ...])
+  // the `index` coordinate shared by the forms of section `secs`
+  fun section_index(ctxt, secs):
+    def fs = ctxt.filter(~keep: fun (e): section_of(e, secs))
+    if fs.length() > 0 | expr_index(fs[0]) | []
+  // the sections in program order -- sorted by their `ix--`/`index`, so a
+  // program's declared order (via ix__) is honored
+  fun sections_by_index(ctxt):
+    def pairs = sections_in_order(ctxt).map(fun (s): [section_index(ctxt, s), s])
+    pairs.sort(fun (p, q): index_less(p[0], q[0])).map(fun (p): p[1])
   // the string arg of the first form of type `name` in `secs`, or #false
   fun first_string_in(ctxt, name, secs):
     def fs = context_ref_all(ctxt, name).filter(~keep: fun (e): section_of(e, secs))
