@@ -58,7 +58,7 @@
 
 (define (override-art mode)
   (case mode
-    [(scribble) "program_scribble"]
+    [(scribble) "program_visual"]
     [(strudel) "program_strudel"]
     [else #f]))
 
