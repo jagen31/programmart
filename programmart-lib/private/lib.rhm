@@ -20,7 +20,7 @@ import:
 
 export:
   section
-  art_title hymn_number bg program_title piece
+  art_title text hymn_number bg program_title piece
   program_html program_text
   meta:
     expr_section section_of
@@ -60,7 +60,8 @@ meta:
 // objects
 // ---------------------------------------------------------------------
 
-define_object art_title      // art_title "Prelude"
+define_object art_title      // art_title "Prelude"  (a section heading)
+define_object text           // text "..."  (a line of body prose)
 define_object hymn_number    // hymn_number 3
 define_object bg             // bg "goldenrod"
 define_object program_title  // program_title "PL Songbook"

@@ -36,12 +36,13 @@ meta:
     def rs = hymn_rows_of(ctxt).filter(~keep: fun (r): hymn_num(r) == n)
     if rs.length() > 0 | rs[0] | #false
 
-// hymn_number n  ->  an art_title with the hymn's title
+// hymn_number n  ->  a `text` line with the hymn's title (the line a
+// program shows in place of the score)
 define_mapping_rewriter hymn_number_to_title over hymn_number:
   fun (stx, h):
     def row = lookup_hymn(current_ctxt(), args_of(h)[0].unwrap())
     if row
-    | (block: def s = Syntax.make(hymn_title(row)); [set_ctxt('art_title $s', get_ctxt(h))])
+    | (block: def s = Syntax.make(hymn_title(row)); [set_ctxt('text $s', get_ctxt(h))])
     | []
 
 // hymn_number n  ->  the hymn's melody, spliced, carrying the reference's

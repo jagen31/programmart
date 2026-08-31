@@ -88,12 +88,13 @@ meta:
     def a = row_author(r)
     if a == "" | t | a +& " — " +& t
 
-// resource name  ->  an art_title with the resource's title line
+// resource name  ->  a `text` line with the resource's title (the line a
+// program shows in place of the contents), keeping the reference's coords
 define_mapping_rewriter resource_to_title over resource:
   fun (stx, res):
     def row = lookup_row(current_ctxt(), args_of(res)[0].unwrap())
     if row
-    | (block: def s = Syntax.make(title_string(row)); [set_ctxt('art_title $s', get_ctxt(res))])
+    | (block: def s = Syntax.make(title_string(row)); [set_ctxt('text $s', get_ctxt(res))])
     | []
 
 // resource name  ->  the resource's contents, spliced under its title,
@@ -105,5 +106,5 @@ define_mapping_rewriter resource_to_contents over resource:
     if row
     | (block:
          def s = Syntax.make(title_string(row))
-         splice_under(coords, ['art_title $s'] ++ row_contents(row)))
+         splice_under(coords, ['text $s'] ++ row_contents(row)))
     | []

@@ -43,6 +43,13 @@ meta:
     context_ref_all(ctxt, #'image).filter(~keep: fun (e): section_of(e, secs))
   fun scripts_in(ctxt, secs):
     context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
+  // a section's `text` lines (e.g. a resource / hymn title standing in for
+  // its contents) -> one Scribble paragraph each
+  fun text_in(ctxt, secs):
+    context_ref_all(ctxt, #'text).filter(~keep: fun (e): section_of(e, secs))
+  fun text_paras(ctxt, secs):
+    for values(acc = "") (t in text_in(ctxt, secs)):
+      acc +& "@para{" +& esc(args_of(t)[0].unwrap()) +& "}\n"
   // a section's scripts -> Scribble paragraphs: each `line` as
   // "@bold{NAME.} text", each `stage_direction` italicised
   fun script_paras(ctxt, secs):
@@ -147,9 +154,10 @@ define_realizer program_scribbler:
                "@image[\"" +& abspath(png) +& "\"]{score}\n")
           | (for values(a = "") (im in imgs):
                a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n")
-        // the spoken script (if any) leads the section, then its score/slides
+        // the spoken script leads the section, then any `text` lines
+        // (resource / hymn titles), then its score/slides
         acc +& "@bgsection[\"" +& color +& "\" \"" +& slit(label) +& "\"]{\n"
-          +& script_paras(ctxt, secs) +& body +& "}\n\n"
+          +& script_paras(ctxt, secs) +& text_paras(ctxt, secs) +& body +& "}\n\n"
     "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& esc(title) +& "}\n\n" +& blocks
 
 // `raco` next to the running `racket` (falls back to PATH)
