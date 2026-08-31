@@ -30,6 +30,7 @@
          racket/file
          racket/string
          racket/system
+         racket/async-channel
          (only-in rsound rs-write))
 
 (define SAY "/usr/bin/say")
@@ -118,6 +119,76 @@
      (close-input-port (list-ref afp 3)))
    (lambda () (with-handlers ([(lambda (_) #t) void]) (delete-file wav)))))
 
+;; perform one event: report it, and make its sound (music -> afplay,
+;; speak/direct -> say).  `mark`s carry no sound.
+(define (perform-event! e i total stopped?)
+  (case (ev-kind e)
+    [("mark")
+     (report "[~a/~a] ~a" i total (list-ref e 1))]
+    [("speak")
+     (report "[~a/~a] ~a" i total (list-ref e 1))
+     (speak! (list-ref e 2))]
+    [("direct")
+     (report "[~a/~a] (direction)" i total)
+     (speak! (list-ref e 1) DIRECTION-VOICE)]
+    [("music")
+     (report "[~a/~a] music ~a s" i total (real->decimal-string (list-ref e 2) 1))
+     (unless (stopped?)
+       (play-sound! ((list-ref e 1)) stopped?))]      ; synthesize now
+    [else (void)]))
+
+;; a one-line summary for the paused prompt in manual mode
+(define (event-summary e)
+  (case (ev-kind e)
+    [("mark")   (format "~a" (list-ref e 1))]
+    [("speak")  (format "~a: ~a" (list-ref e 1) (list-ref e 2))]
+    [("direct") (format "(stage direction) ~a" (list-ref e 1))]
+    [("music")  (format "music · ~a s" (real->decimal-string (list-ref e 2) 1))]
+    [else       "item"]))
+
+(define (mark? e) (string=? (ev-kind e) "mark"))
+
+;; Automatic: walk the timeline end to end, each event for its own length.
+(define (perform-auto! vec total stopped?)
+  (for ([e (in-vector vec)] [i (in-naturals 1)])
+    (unless (stopped?) (perform-event! e i total stopped?))))
+
+;; Manual ("Perform Myself"): pause before every performable item and wait
+;; for a command -- `play` performs the current item and stays on it (so it
+;; can be repeated), `next`/`prev` step between items, `stop` ends.  Section
+;; marks carry no sound, so they are announced and stepped past rather than
+;; paused on.  Indexed, because `prev` has to reach items already behind the
+;; cursor.  (Mirrors the concert player's `perform-manual!`.)
+(define (perform-manual! vec total stopped? next-cmd)
+  ;; step one performable item from `from` in direction `dir` (+1/-1),
+  ;; announcing any marks crossed; returns the new index or #f off the end
+  (define (step from dir)
+    (let scan ([j (+ from dir)])
+      (cond
+        [(or (< j 0) (>= j total)) #f]
+        [(mark? (vector-ref vec j))
+         (perform-event! (vector-ref vec j) (add1 j) total stopped?)
+         (scan (+ j dir))]
+        [else j])))
+  (define first (step -1 +1))
+  (when first
+    (let loop ([cur first])
+      (unless (stopped?)
+        (define ev (vector-ref vec cur))
+        (report "[~a/~a] ⏸ ~a — Play to perform · Prev / Next to move"
+                (add1 cur) total (event-summary ev))
+        (let wait ()
+          (case (next-cmd)
+            [(play)
+             (perform-event! ev (add1 cur) total stopped?)
+             (unless (stopped?)
+               (report "[~a/~a] ✓ ~a — Prev / Next to move" (add1 cur) total (event-summary ev)))
+             (wait)]
+            [(next) (define n (step cur +1)) (if n (loop n) (void))]
+            [(prev) (define p (step cur -1)) (if p (loop p) (wait))]
+            [(stop) (void)]
+            [else (wait)]))))))
+
 ;; ---------------------------------------------------------------------------
 
 (module+ main
@@ -127,16 +198,28 @@
   (define path (path->complete-path (string->path (vector-ref args 0))))
   (define wd (path->complete-path (string->path (vector-ref args 1))))
   (define dir (path-only path))
+  (define manual? (and (= 6 (vector-length args))
+                       (string=? "manual" (vector-ref args 5))))
 
   (define stopped (box #f))
+  (define cmd-ch (make-async-channel))
+  ;; The panel talks over stdin, one command per line: `play` performs the
+  ;; current item, `next`/`prev` move, and closing the port (EOF) -- or a
+  ;; `stop` line -- ends the piece.  In auto mode the panel only closes the
+  ;; port, so this collapses to stop-on-EOF.
   (void
    (thread (lambda ()
              (let loop ()
                (define l (read-line))
                (cond
-                 [(eof-object? l) (set-box! stopped #t)]
-                 [(string=? (string-trim l) "stop") (set-box! stopped #t)]
-                 [else (loop)])))))
+                 [(eof-object? l) (set-box! stopped #t) (async-channel-put cmd-ch 'stop)]
+                 [else
+                  (case (string-trim l)
+                    [("play") (async-channel-put cmd-ch 'play) (loop)]
+                    [("next") (async-channel-put cmd-ch 'next) (loop)]
+                    [("prev") (async-channel-put cmd-ch 'prev) (loop)]
+                    [("stop") (set-box! stopped #t) (async-channel-put cmd-ch 'stop)]
+                    [else (loop)])])))))
   (define (stopped?) (unbox stopped))
 
   (parameterize ([progress-out (current-output-port)]
@@ -160,24 +243,10 @@
       (unless (and timeline (pair? timeline))
         (report "The performer produced an empty timeline.")
         (exit 0))
-      (define total (length timeline))
-      (for ([e (in-list timeline)] [i (in-naturals 1)])
-        (unless (stopped?)
-          (case (ev-kind e)
-            [("mark")
-             (report "[~a/~a] ~a" i total (list-ref e 1))]
-            [("speak")
-             (report "[~a/~a] ~a" i total (list-ref e 1))
-             (speak! (list-ref e 2))]
-            [("direct")
-             (report "[~a/~a] (direction)" i total)
-             (speak! (list-ref e 1) DIRECTION-VOICE)]
-            [("music")
-             (define secs (list-ref e 2))
-             (report "[~a/~a] music ~a s" i total (real->decimal-string secs 1))
-             (define snd ((list-ref e 1)))         ; synthesize this section now
-             (unless (stopped?)
-               (play-sound! snd stopped?))]
-            [else (void)])))
+      (define vec (list->vector timeline))
+      (define total (vector-length vec))
+      (if manual?
+          (perform-manual! vec total stopped? (lambda () (async-channel-get cmd-ch)))
+          (perform-auto! vec total stopped?))
       (report (if (stopped?) "stopped" "done"))
       (exit 0))))
