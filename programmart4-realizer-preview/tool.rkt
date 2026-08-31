@@ -38,7 +38,7 @@
       3/5))
 
 (define (show-label visible?)
-  (if visible? "Hide Realizer Preview" "Show Realizer Preview"))
+  (if visible? "Hide Realizer Preview (Rhombus)" "Show Realizer Preview (Rhombus)"))
 
 (define (preview-frame-mixin super%)
   (class super%
@@ -105,9 +105,11 @@
                  [label (show-label visible?)]
                  [parent show-menu]
                  [callback (lambda (i e) (toggle-preview))]
+                 ;; option-cmd-R, distinct from the original realizer-preview's
+                 ;; shift-cmd-R, so both tools can be installed at once
                  [shortcut #\r]
-                 [shortcut-prefix (cons 'shift (get-default-shortcut-prefix))]))
-      (set-show-menu-sort-key menu-item 106))
+                 [shortcut-prefix (cons 'option (get-default-shortcut-prefix))]))
+      (set-show-menu-sort-key menu-item 107))
 
     (define/augment (on-close)
       (when preview (send preview shutdown))

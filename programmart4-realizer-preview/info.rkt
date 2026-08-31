@@ -15,5 +15,5 @@
 (define license '(MIT))
 
 (define drracket-tools '(("tool.rkt")))
-(define drracket-tool-names '("Realizer Preview"))
+(define drracket-tool-names '("Realizer Preview (Rhombus)"))
 (define drracket-tool-icons '(#f))

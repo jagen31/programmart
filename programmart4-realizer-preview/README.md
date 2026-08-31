@@ -29,7 +29,11 @@ to tonart4/programmart. See "What's here vs. deferred" below.
 raco pkg install --link /Users/jared.gentner/git/programmart/programmart4-realizer-preview
 ```
 
-Restart DrRacket, then **View → Show Realizer Preview** (`⇧⌘R`).
+Restart DrRacket, then **View → Show Realizer Preview (Rhombus)** (`⌥⌘R`).
+
+> The menu item, shortcut (`⌥⌘R`), sort key, and preference keys are all
+> distinct from the original Racket `realizer-preview` plugin, so both can
+> be installed and used at once.
 
 To pick up code changes to the plugin, `raco make tool.rkt` and restart
 DrRacket.
