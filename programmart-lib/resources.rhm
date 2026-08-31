@@ -1,0 +1,109 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// programmart -- resources and the multi-realizer art_program.
+//
+//   art_program: name: prog; ...   an embedding holding one sub-program
+//                                   per realizer; `pick_program name`
+//                                   selects one and splices it
+//
+//   resource_row name "title" "author": contents   a row of a resource
+//   resource name                                   reference a resource
+//   resource_to_title / resource_to_contents        expand a reference
+//
+// A "resource" is the general form of a program item: named content held
+// in a table, referenced by name so the program mentions it without
+// printing the whole thing inline.  Ported from the concert's datenart
+// resource table, minus the SQL machinery.
+// =====================================================================
+
+import: programmart open
+
+export:
+  art_program pick_program
+  resource_row resource
+  resource_to_title resource_to_contents
+  meta:
+    program_variants program_pick resources_of row_name row_title
+    row_author row_contents lookup_row title_string
+
+// ---------------------------------------------------------------------
+// art_program: pick a sub-program by realizer
+// ---------------------------------------------------------------------
+
+// an embedding whose inner is its raw `name: prog` variant clauses
+// (stored, not rewritten -- the chosen one is rewritten when picked)
+define_embedding art_program:
+  fun (expr): body_of(expr)
+
+meta:
+  // merge `coords` into each form's own coordinates (section appends, an
+  // interval the form already carries is kept)
+  fun splice_under(coords, exprs):
+    exprs.map(fun (e): set_ctxt(e, merge_coordinates(coords, get_ctxt(e), current_ctxt())))
+  // the variant clauses stored inside an art_program
+  fun program_variants(ap): ap.group_property(#'inner) || []
+  // the program of the clause named `name` (its block body), or #false
+  fun program_pick(ap, name):
+    def cl = program_variants(ap).filter(~keep: fun (c): head_of(c) == name)
+    if cl.length() > 0 | body_of(cl[0]) | #false
+
+// pick_program name: replace each art_program in scope with its `name`
+// variant, carrying the art_program's coordinates onto the result
+define_mapping_rewriter pick_program over art_program:
+  fun (stx, ap):
+    def name = args_of(stx)[0].unwrap()
+    def chosen = program_pick(ap, name)
+    def coords = remove_from_ctxt(get_ctxt(ap), #'art_id)
+    if chosen | splice_under(coords, chosen) | []
+
+// ---------------------------------------------------------------------
+// resources
+// ---------------------------------------------------------------------
+
+// a row of the resource table: name, printed title, author, and contents
+// (held as the block body).  `resources` bundles rows into scope.
+define_embedding resource_row:
+  fun (expr): rewrite(body_of(expr))
+
+define_object resource        // resource name  (a reference)
+
+meta:
+  fun resources_of(ctxt):
+    context_ref_all(ctxt, #'resource_row)
+  fun row_name(r):
+    match r | 'resource_row $n $_ ...': n.unwrap() | ~else: #false
+  fun row_title(r):
+    match r | 'resource_row $_ $t $_ ...': t.unwrap() | ~else: ""
+  fun row_author(r):
+    match r | 'resource_row $_ $_ $a $_ ...': a.unwrap() | ~else: ""
+  fun row_contents(r): r.group_property(#'inner) || []
+  // the row whose name matches, or #false
+  fun lookup_row(ctxt, n):
+    def rs = resources_of(ctxt).filter(~keep: fun (r): row_name(r) == n)
+    if rs.length() > 0 | rs[0] | #false
+  // "Author — Title", or just the title when there is no author
+  fun title_string(r):
+    def t = row_title(r)
+    def a = row_author(r)
+    if a == "" | t | a +& " — " +& t
+
+// resource name  ->  an art_title with the resource's title line
+define_mapping_rewriter resource_to_title over resource:
+  fun (stx, res):
+    def row = lookup_row(current_ctxt(), args_of(res)[0].unwrap())
+    if row
+    | (block: def s = Syntax.make(title_string(row)); [set_ctxt('art_title $s', get_ctxt(res))])
+    | []
+
+// resource name  ->  the resource's contents, spliced under its title,
+// carrying the reference's coordinates (e.g. its section)
+define_mapping_rewriter resource_to_contents over resource:
+  fun (stx, res):
+    def row = lookup_row(current_ctxt(), args_of(res)[0].unwrap())
+    def coords = remove_from_ctxt(get_ctxt(res), #'art_id)
+    if row
+    | (block:
+         def s = Syntax.make(title_string(row))
+         splice_under(coords, ['art_title $s'] ++ row_contents(row)))
+    | []

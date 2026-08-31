@@ -95,6 +95,8 @@ core is facade-only). Engraving needs the `lilypond` CLI; rendering needs
 - `programmart-lib/` — the library (collection `programmart`)
   - `main.rhm` — public entry (re-exports facade + the program lib)
   - `private/lib.rhm` — the vocabulary, the hymnal, and the text/HTML realizers
+  - `resources.rhm` — the resource table + `art_program` (multi-realizer)
+  - `hymnal.rhm` — the hymnal table (`hymn_number_to_title` / `_to_score`)
   - `scribble.rhm` — the Scribble realizer (engraved scores, section backgrounds)
   - `tests/demo.rhm` — a worked example
 - `programmart/` — the metapackage

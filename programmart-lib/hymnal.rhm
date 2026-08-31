@@ -1,0 +1,55 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// programmart -- the hymnal.
+//
+//   hymn_row number "title" "tune": melody   a row of the hymnal table
+//   hymn_number n                            reference a hymn by number
+//   hymn_number_to_title                     n -> its title
+//   hymn_number_to_score                     n -> its melody, spliced
+//
+// The hymnal is the resource table keyed by number rather than name.  Its
+// rows hold a melody (any art -- e.g. tonart4 notes), so the tunes live
+// wherever the hymnal is authored; this module is just the table.
+// =====================================================================
+
+import: programmart open
+
+export:
+  hymn_row
+  hymn_number_to_title hymn_number_to_score
+  meta: hymn_rows_of hymn_num hymn_title hymn_contents lookup_hymn
+
+// a row of the hymnal: number, printed title, tune name, and the melody
+// (held as the block body).  `hymn_number` (from the core) references it.
+define_embedding hymn_row:
+  fun (expr): rewrite(body_of(expr))
+
+meta:
+  fun hymn_rows_of(ctxt): context_ref_all(ctxt, #'hymn_row)
+  fun hymn_num(r):
+    match r | 'hymn_row $n $_ ...': n.unwrap() | ~else: #false
+  fun hymn_title(r):
+    match r | 'hymn_row $_ $t $_ ...': t.unwrap() | ~else: ""
+  fun hymn_contents(r): r.group_property(#'inner) || []
+  fun lookup_hymn(ctxt, n):
+    def rs = hymn_rows_of(ctxt).filter(~keep: fun (r): hymn_num(r) == n)
+    if rs.length() > 0 | rs[0] | #false
+
+// hymn_number n  ->  an art_title with the hymn's title
+define_mapping_rewriter hymn_number_to_title over hymn_number:
+  fun (stx, h):
+    def row = lookup_hymn(current_ctxt(), args_of(h)[0].unwrap())
+    if row
+    | (block: def s = Syntax.make(hymn_title(row)); [set_ctxt('art_title $s', get_ctxt(h))])
+    | []
+
+// hymn_number n  ->  the hymn's melody, spliced, carrying the reference's
+// coordinates (e.g. its section and voice)
+define_mapping_rewriter hymn_number_to_score over hymn_number:
+  fun (stx, h):
+    def row = lookup_hymn(current_ctxt(), args_of(h)[0].unwrap())
+    def coords = remove_from_ctxt(get_ctxt(h), #'art_id)
+    if row
+    | hymn_contents(row).map(fun (e): set_ctxt(e, merge_coordinates(coords, get_ctxt(e), current_ctxt())))
+    | []

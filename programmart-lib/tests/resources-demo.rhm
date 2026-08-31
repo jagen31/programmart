@@ -1,0 +1,35 @@
+#lang rhombus/and_meta
+
+// The resource table + art_program: reference content by name, and pick a
+// sub-program per realizer.
+
+import:
+  programmart open
+  lib("programmart/resources.rhm") open
+
+define_object note
+
+define_art library:
+  resource_row theme "Main Theme" "Jared":
+    at [interval 0 1]: note c
+    at [interval 1 2]: note e
+  resource_row finale "Finale" "":
+    art_program:
+      print:
+        note f
+      perform:
+        note p
+
+define_realizer show:
+  fun (ctxt):
+    println("titles: " +& to_string(context_ref_all(ctxt, #'art_title).map(fun (t): args_of(t)[0].unwrap())))
+    println("notes: " +& to_string(context_ref_all(ctxt, #'note).map(fun (n): args_of(n)[0].unwrap())))
+    '#void'
+
+println("resource + art_program (pick print):")
+realize show:
+  library
+  resource theme
+  resource finale
+  resource_to_contents
+  pick_program print
