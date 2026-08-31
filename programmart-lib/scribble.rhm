@@ -3,7 +3,7 @@
 // =====================================================================
 // programmart -- the Scribble realizer.
 //
-// `program_scribble` renders a program as a Scribble document: the title,
+// `program_scribbler` renders a program as a Scribble document: the title,
 // then each section (in ix-- order) as a background-tinted block holding
 // its title, its engraved score (tonart4's LilyPond realizer, with any
 // `image`s -- e.g. dancer figures -- hung over the staves), and any
@@ -31,7 +31,7 @@ import:
     lib("racket/base.rkt") as mrkt
 
 export:
-  program_scribble
+  program_scribbler
   render_scribble_html
 
 meta:
@@ -124,7 +124,7 @@ meta:
       +& (if codes == "" | "" | "@verbatim{\n" +& codes +& "}\n")
       +& music +& "}\n"
 
-define_realizer program_scribble:
+define_realizer program_scribbler:
   fun (ctxt):
     def dir = "program-scores"
     mfile.#{make-directory*}(dir)

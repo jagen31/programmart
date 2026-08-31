@@ -44,13 +44,31 @@
 
 (provide extract-result)
 
-;; The art each button realizes.  Only `program` for now: `realize` wants
-;; a bare realizer id, so the scribble realizer is imported as
-;; `program_scribble` -- which would collide with a same-named override
-;; art in the driver.  (When the strudel / chuck realizers are ported,
-;; their `program_strudel` / `program_chuck` override arts do not collide,
-;; and can be added here.)
+;; The art each button realizes.  A per-realizer override wins over the
+;; shared `program` when the module provides it, so a program that needs
+;; something extra in only one output can say so:
+;;
+;;   define_art program: hymnal; resources; service; color_program
+;;   define_art program_scribble: program; arm_diagrams_to_images "…"; …
+;;
+;; The scribble realizer is `program_scribbler` (deliberately not
+;; `program_scribble`), so the `program_scribble` override art does not
+;; collide with it in the driver.
 (define BASE-ART "program")
+
+(define (override-art mode)
+  (case mode
+    [(scribble) "program_scribble"]
+    [(strudel) "program_strudel"]
+    [else #f]))
+
+;; Which art this run realizes, or #f if the module has neither.
+(define (choose-art mode names)
+  (define override (override-art mode))
+  (cond
+    [(and override (member override names)) override]
+    [(member BASE-ART names) BASE-ART]
+    [else #f]))
 
 ;; ---------------------------------------------------------------------------
 ;; errors
@@ -93,11 +111,14 @@
               [e (in-list (cdr grp))])
     (symbol->string (car e))))
 
-(define (missing-art-message path names)
+(define (missing-art-message path mode names)
+  (define override (override-art mode))
   (define arts (sort names string<?))
   (string-append
-   (format "~a provides no `program` art.\n\nThe realizer buttons realize the `program` art the module provides."
-           (path->string (file-name-from-path path)))
+   (format "~a provides no `program`~a art.\n\nThe ~a button realizes `~a` if the module provides one, and `program` otherwise."
+           (path->string (file-name-from-path path))
+           (if override (format " or `~a`" override) "")
+           mode (or override "program"))
    (if (null? arts)
        ""
        (format "\n\nThis module does provide these arts: ~a\n\nAdd a `define_art program: …` (and `export program`) that composes one of them."
@@ -108,8 +129,10 @@
 ;; ---------------------------------------------------------------------------
 
 ;; `~s` writes the basename as a properly escaped literal, so spaces and
-;; quotes in it are not a problem.
-(define (scribble-driver-text user-basename)
+;; quotes in it are not a problem.  The realizer `program_scribbler` and the
+;; art (`program` or the `program_scribble` override) never share a name,
+;; so both can be imported `open`.
+(define (scribble-driver-text user-basename art)
   (format (string-append
            "#lang rhombus/and_meta\n"
            "import:\n"
@@ -117,9 +140,9 @@
            "  lib(\"tonart4/main.rhm\") open\n"
            "  ~s open\n"
            "export: result\n"
-           "def result = realize program_scribble: ~a\n")
+           "def result = realize program_scribbler: ~a\n")
           user-basename
-          BASE-ART))
+          art))
 
 ;; The driver is a sibling of the source and imported by basename.  It is
 ;; deleted afterward, along with the `.zo` compiled/ picks up.
@@ -177,13 +200,14 @@
          (finish-err (format "Unknown mode ~a." mode))]
         [else
          (define names (art-exports path))
+         (define art (choose-art mode names))
          (cond
-           [(not (member BASE-ART names))
-            (finish-err (missing-art-message path names))]
+           [(not art)
+            (finish-err (missing-art-message path mode names))]
            [else
             (define src-str
               (call-with-driver
-               dir (scribble-driver-text (path->string (file-name-from-path path)))
+               dir (scribble-driver-text (path->string (file-name-from-path path)) art)
                (lambda (drv) (dynamic-require drv 'result (lambda () #f)))))
             (cond
               [(not (string? src-str))
@@ -191,7 +215,7 @@
               [else
                (define doc (source-string->doc src-str dir))
                (if (part? doc)
-                   (list* 'ok (string->symbol BASE-ART) (doc->display-list doc))
+                   (list* 'ok (string->symbol art) (doc->display-list doc))
                    (finish-err "The scribble realizer's document did not render."))])])]))))
 
 (module+ main
