@@ -53,14 +53,23 @@ meta:
       out.value := out.value +& (cond | c == "@": "@\"@\"" | c == "{": "@\"{\"" | c == "}": "@\"}\"" | ~else: c)
     out.value
 
-  // a `#lang scribble/base` preamble: `@bgsection[color]{title}{body}` --
-  // a titled block whose HTML carries that background colour
+  // a `#lang scribble/base` preamble:
+  //   @bgsection[color]{title}{body} -- a titled block whose HTML carries
+  //     that background colour
+  //   @slideframe{title}{body} -- a framed, centered slide card (the
+  //     pict-framed slide layout, in HTML)
   fun scribble_preamble():
     "@(require scribble/core scribble/html-properties scribble/base)\n"
+      +& "@(define (styled s . body) (nested #:style (style #f (list (attributes (list (cons 'style s))))) body))\n"
       +& "@(define (bgsection color title . body)\n"
-      +& "   (nested #:style (style #f (list (attributes\n"
-      +& "     (list (cons 'style (string-append \"background:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\"))))))\n"
-      +& "     (bold (larger title)) (linebreak) body))\n\n"
+      +& "   (styled (string-append \"background:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\")\n"
+      +& "     (bold (larger title)) (linebreak) body))\n"
+      +& "@(define (slideframe title . body)\n"
+      +& "   (styled (string-append \"border:1px solid #888;border-radius:8px;background:#fff;\"\n"
+      +& "                          \"box-shadow:0 3px 12px rgba(0,0,0,.18);width:640px;min-height:360px;\"\n"
+      +& "                          \"margin:1.4em auto;padding:1.6em 2em;box-sizing:border-box;\")\n"
+      +& "     (styled \"font-size:150%;font-weight:bold;text-align:center;border-bottom:2px solid #333;padding-bottom:.3em;margin-bottom:.7em;\" title)\n"
+      +& "     body))\n\n"
 
   // one slide -> Scribble: bold title, bullets, code, and engraved music
   fun slide_scribble(s, dir, tag):
@@ -81,10 +90,10 @@ meta:
            def png = engrave(ly_document_staves(notes_to_staves(notes)), dir, tag, "png")
            "@image[\"" +& png +& "\"]{score}\n")
       | ""
-    "@bold{" +& esc(args_of(s)[0].unwrap()) +& "}\n@linebreak[]\n"
+    "@slideframe{" +& esc(args_of(s)[0].unwrap()) +& "}{\n"
       +& (if items == "" | "" | "@itemlist[" +& items +& "]\n")
       +& (if codes == "" | "" | "@verbatim{\n" +& codes +& "}\n")
-      +& music +& "@linebreak[]\n"
+      +& music +& "}\n"
 
 define_realizer program_scribble:
   fun (ctxt):
