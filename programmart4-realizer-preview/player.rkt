@@ -30,9 +30,10 @@
          racket/file
          racket/string
          racket/system
-         (only-in rsound play/proc stop rs-frames default-sample-rate))
+         (only-in rsound rs-write))
 
 (define SAY "/usr/bin/say")
+(define AFPLAY "/usr/bin/afplay")   ; play a WAV, reliably, with no PortAudio
 (define DIRECTION-VOICE "Daniel")   ; stage directions in a different voice
 
 (define progress-out (make-parameter (current-output-port)))
@@ -95,6 +96,28 @@
 (define (speak! text [voice #f])
   (apply system* SAY (append (if voice (list "-v" voice) '()) (list text))))
 
+;; play an rsound by writing it to a temp WAV and running `afplay`, which
+;; is interruptible (killed on stop) -- rsound's own PortAudio playback is
+;; unreliable across machines.  Returns when the sound finishes or `stop?`.
+(define (play-sound! snd stop?)
+  (define wav (make-temporary-file "realizer-audio~a.wav"))
+  (dynamic-wind
+   void
+   (lambda ()
+     (rs-write snd wav)
+     (define afp (process* AFPLAY (path->string wav)))
+     (define ctl (list-ref afp 4))
+     (let loop ()
+       (cond
+         [(stop?) (with-handlers ([(lambda (_) #t) void]) (ctl 'kill))]
+         [(eq? 'running (ctl 'status)) (sleep 0.1) (loop)]
+         [else (void)]))
+     ;; close the pipes process* opened
+     (close-input-port (list-ref afp 0))
+     (close-output-port (list-ref afp 1))
+     (close-input-port (list-ref afp 3)))
+   (lambda () (with-handlers ([(lambda (_) #t) void]) (delete-file wav)))))
+
 ;; ---------------------------------------------------------------------------
 
 (module+ main
@@ -111,8 +134,8 @@
              (let loop ()
                (define l (read-line))
                (cond
-                 [(eof-object? l) (set-box! stopped #t) (stop)]
-                 [(string=? (string-trim l) "stop") (set-box! stopped #t) (stop)]
+                 [(eof-object? l) (set-box! stopped #t)]
+                 [(string=? (string-trim l) "stop") (set-box! stopped #t)]
                  [else (loop)])))))
   (define (stopped?) (unbox stopped))
 
@@ -122,7 +145,6 @@
                  [current-output-port (current-error-port)])   ; realize chatter -> stderr
     (with-handlers ([(lambda (e) #t)
                      (lambda (e)
-                       (with-handlers ([(lambda (_) #t) void]) (stop))
                        (report "!! ~a" (if (exn? e) (exn-message e) e))
                        (exit 1))])
       (define names (art-exports path))
@@ -155,12 +177,7 @@
              (report "[~a/~a] music ~a s" i total (real->decimal-string secs 1))
              (define snd ((list-ref e 1)))         ; synthesize this section now
              (unless (stopped?)
-               (play/proc snd)
-               (let wait ([left secs])
-                 (when (and (> left 0) (not (stopped?)))
-                   (sleep (min 0.2 left))
-                   (wait (- left 0.2)))))]
+               (play-sound! snd stopped?))]
             [else (void)])))
-      (with-handlers ([(lambda (_) #t) void]) (stop))
       (report (if (stopped?) "stopped" "done"))
       (exit 0))))

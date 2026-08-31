@@ -16,9 +16,13 @@ Buttons:
   `program_performer` realizer compiles it into a *timeline* of
   instructions in section order — a mark per section, its dialogue, and its
   music — and the player walks it: each section's music is synthesized
-  (tonart4's `music_rsound`) and played in turn, and each spoken line goes
-  to macOS `say` (stage directions in a second voice). **Working.** (Stop
-  ends it; the transport's Perform/Prev/Next are inert on this path.)
+  (tonart4's `music_rsound`), written to a temp WAV and played with macOS
+  `afplay`, and each spoken line goes to macOS `say` (stage directions in a
+  second voice). **Working.** (Stop ends it — `afplay` is killed mid-piece;
+  the transport's Perform/Prev/Next are inert on this path.)
+
+  > Playback is `afplay`, not rsound's own PortAudio output, which throws
+  > "Internal PortAudio error" on many machines.
 - **Strudel ▸** — will realize a `program_strudel` and hand it to a Strudel
   REPL on localhost. **Pending** the strudel realizer — the button reports
   that for now.
