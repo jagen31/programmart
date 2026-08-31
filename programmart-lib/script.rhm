@@ -1,0 +1,54 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// Programmart -- the play-script vocabulary, ported from the tonart
+// concert's `script/script.rkt`.
+//
+//   line <character> "..."     an object: one spoken line.  The character
+//                              is an identifier (rendered upper-cased and
+//                              bold as the speaker name); the text is a
+//                              string.
+//   stage_direction "..."      an object: a stage direction (rendered in
+//                              italics, the printed-play convention).  We
+//                              avoid the name `direction` to stay clear of
+//                              the musicxml `direction` object.
+//   script: line …; …          an embedding that gathers a scene's lines
+//                              and directions into one block, so a
+//                              realizer can format them as cohesive
+//                              dialogue (like `seq`, its items are held as
+//                              the form's `inner`, in order).
+//
+// The scribble realizer reads these by head symbol, so it renders them
+// without importing this module.
+// =====================================================================
+
+import:
+  facade open
+  meta:
+    lib("racket/base.rkt") as mrkt
+
+export:
+  script line stage_direction
+  meta:
+    script_items line_speaker line_text direction_text
+
+// ---------------------------------------------------------------------
+// vocabulary
+// ---------------------------------------------------------------------
+
+define_object line             // line Presenter "Hello everyone."
+define_object stage_direction  // stage_direction "the audience rises"
+
+define_embedding script:       // script: line …; stage_direction …; …
+  fun (expr): rewrite(body_of(expr))
+
+meta:
+  // the (rewritten) line/stage_direction items inside a script, in order
+  fun script_items(s): s.group_property(#'inner) || []
+  // the speaker of a line, upper-cased ("PRESENTER")
+  fun line_speaker(e):
+    mrkt.#{string-upcase}(to_string(args_of(e)[0].unwrap()))
+  // the spoken text of a line
+  fun line_text(e): to_string(args_of(e)[1].unwrap())
+  // the text of a stage direction
+  fun direction_text(e): to_string(args_of(e)[0].unwrap())

@@ -41,6 +41,20 @@ meta:
       .filter(~keep: fun (e): section_of(e, secs))
   fun images_in(ctxt, secs):
     context_ref_all(ctxt, #'image).filter(~keep: fun (e): section_of(e, secs))
+  fun scripts_in(ctxt, secs):
+    context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
+  // a section's scripts -> Scribble paragraphs: each `line` as
+  // "@bold{NAME.} text", each `stage_direction` italicised
+  fun script_paras(ctxt, secs):
+    for values(acc = "") (sc in scripts_in(ctxt, secs)):
+      for values(a = acc) (it in (sc.group_property(#'inner) || [])):
+        cond
+        | head_of(it) == #'line:
+            a +& "@para{@bold{" +& esc(mrkt.#{string-upcase}(to_string(args_of(it)[0].unwrap())))
+              +& ".} " +& esc(args_of(it)[1].unwrap()) +& "}\n"
+        | head_of(it) == #'stage_direction:
+            a +& "@para{@italic{" +& esc(args_of(it)[0].unwrap()) +& "}}\n"
+        | ~else: a
   fun slides_in(ctxt, secs):
     context_ref_all(ctxt, #'slide)
       .filter(~keep: fun (e): section_of(e, secs))
@@ -133,8 +147,9 @@ define_realizer program_scribble:
                "@image[\"" +& abspath(png) +& "\"]{score}\n")
           | (for values(a = "") (im in imgs):
                a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n")
+        // the spoken script (if any) leads the section, then its score/slides
         acc +& "@bgsection[\"" +& color +& "\" \"" +& slit(label) +& "\"]{\n"
-          +& body +& "}\n\n"
+          +& script_paras(ctxt, secs) +& body +& "}\n\n"
     "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& esc(title) +& "}\n\n" +& blocks
 
 // `raco` next to the running `racket` (falls back to PATH)
