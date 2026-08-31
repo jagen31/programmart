@@ -102,7 +102,7 @@ meta:
     def music:
       if notes.length() > 0
       | (block:
-           def png = engrave(ly_document_staves(notes_to_staves(notes)), dir, tag, "png")
+           def png = engrave_cropped(ly_document_staves(notes_to_staves(notes)), dir, tag, "png")
            "@image[\"" +& abspath(png) +& "\"]{score}\n")
       | ""
     "@slideframe[\"" +& slit(args_of(s)[0].unwrap()) +& "\"]{\n"
@@ -128,7 +128,8 @@ define_realizer program_scribble:
           if notes.length() > 0
           | (block:
                def src = ly_document_staves(notes_to_staves(notes, 4, imgs))
-               def png = engrave(src, dir, sec_id(secs), "png")
+               // crop tight to the music -- no A4 page whitespace around it
+               def png = engrave_cropped(src, dir, sec_id(secs), "png")
                "@image[\"" +& abspath(png) +& "\"]{score}\n")
           | (for values(a = "") (im in imgs):
                a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n")
