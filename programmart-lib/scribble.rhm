@@ -1,0 +1,76 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// programmart -- the Scribble realizer.
+//
+// `program_scribble` renders a concert program as Scribble source: a
+// title, and for each section its title and (if the section holds notes)
+// an engraved score, produced by tonart4's LilyPond realizer at realize
+// time.  `render_scribble_html` runs `raco scribble --html` on the source.
+//
+// This bridges programmart (the program vocabulary) and tonart4 (music +
+// engraving), so it lives in its own module rather than the facade-only
+// core.
+// =====================================================================
+
+import:
+  programmart open
+  lib("tonart4/main.rhm") open        // note, music, ...
+  lib("tonart4/lilypond.rhm") open    // engrave, notes_to_lilypond, ly_document
+  lib("racket/base.rkt") as rkt
+  lib("racket/system.rkt") as sys
+  lib("racket/file.rkt") as rfile
+  lib("racket/path.rkt") as rpath
+  meta:
+    lib("racket/base.rkt") as mrkt
+    lib("racket/file.rkt") as mfile
+
+export:
+  program_scribble
+  render_scribble_html
+
+meta:
+  // the notes sitting in section `secs`
+  fun notes_in(ctxt, secs):
+    context_ref_all(ctxt, #'note).filter(~keep: fun (e): section_of(e, secs))
+  // a filename-safe id for a section path
+  fun sec_id(secs): join(secs.map(fun (s): to_string(s)), "-")
+
+// program_scribble: engrave each section's notes and assemble a Scribble
+// document (`#lang scribble/base`) referencing the score images.  Scores
+// are written under `dir` (default "program-scores"), created if needed.
+define_realizer program_scribble:
+  fun (ctxt):
+    def dir = "program-scores"
+    mfile.#{make-directory*}(dir)
+    def title = program_name(ctxt)
+    def blocks:
+      for values(acc = "") (secs in sections_in_order(ctxt)):
+        def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
+        def notes = notes_in(ctxt, secs)
+        def img:
+          if notes.length() > 0
+          | (block:
+               def src = ly_document(notes_to_lilypond(notes))
+               def path = engrave(src, dir, sec_id(secs), "png")
+               "@image[\"" +& path +& "\"]{score}\n\n")
+          | ""
+        acc +& "@section{" +& label +& "}\n\n" +& img
+    "#lang scribble/base\n\n@title{" +& title +& "}\n\n" +& blocks
+
+// `raco` next to the running `racket` (falls back to PATH)
+fun raco_cmd():
+  def r = rkt.#{find-executable-path}(rkt.#{find-system-path}(rkt.#{string->symbol}("exec-file")))
+  if r
+  | rkt.#{path->string}(rkt.#{build-path}(rpath.#{path-only}(r), "raco"))
+  | "raco"
+
+// render Scribble `source` to `dir/name.html` (runtime); returns the path
+fun render_scribble_html(source, dir, name):
+  rfile.#{make-directory*}(dir)
+  def scrbl = dir +& "/" +& name +& ".scrbl"
+  def f = rkt.#{open-output-file}(scrbl, ~exists: #'replace)
+  rkt.#{write-string}(source, f)
+  rkt.#{close-output-port}(f)
+  sys.#{system}("\"" +& raco_cmd() +& "\" scribble --dest " +& dir +& " " +& scrbl)
+  dir +& "/" +& name +& ".html"

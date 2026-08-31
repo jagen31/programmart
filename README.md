@@ -54,11 +54,45 @@ Because a `bg` carries a `section` coordinate, the `color_program` and the
 the lightblue on the opening song, with no explicit wiring. That is the whole
 point of Art: forms meet through their coordinates.
 
+## Engraved programs (Scribble)
+
+`programmart/scribble.rhm` adds `program_scribble` — a realizer that renders
+the program as [Scribble](https://docs.racket-lang.org/scribble/) source, and
+for each section that holds notes, engraves a score with
+[tonart4](https://github.com/jagen31/tonart4)'s LilyPond realizer and embeds
+it. `render_scribble_html` runs `raco scribble --html` to produce the page.
+
+```
+import:
+  programmart open
+  tonart4 open
+  lib("programmart/scribble.rhm") open
+
+define_art order_of_service:
+  program_title "Sunday Service"
+  at [section prelude]:
+    art_title "Prelude"
+    at [interval 0 1]: note g 0 4
+    at [interval 1 2]: note a 0 4
+  at [section opening_song]:
+    art_title "Opening Song"
+    at [interval 0 2]: note c 0 5
+
+def src = realize program_scribble: order_of_service
+render_scribble_html(src, "program-scores", "program")
+```
+
+This bridges programmart and tonart4, so it lives in its own module (the
+core is facade-only). Engraving needs the `lilypond` CLI; rendering needs
+`raco`. Scores are written under the output directory (default
+`program-scores/`).
+
 ## Layout
 
 - `programmart-lib/` — the library (collection `programmart`)
   - `main.rhm` — public entry (re-exports facade + the program lib)
-  - `private/lib.rhm` — the vocabulary, the hymnal, and the realizers
+  - `private/lib.rhm` — the vocabulary, the hymnal, and the text/HTML realizers
+  - `scribble.rhm` — the Scribble realizer (engraved scores, via tonart4)
   - `tests/demo.rhm` — a worked example
 - `programmart/` — the metapackage
 

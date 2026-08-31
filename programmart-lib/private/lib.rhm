@@ -24,7 +24,9 @@ export:
   art_title hymn_number bg program_title piece
   hymn_number_to_title
   program_html program_text
-  meta: hymnal_title expr_section section_of
+  meta:
+    hymnal_title expr_section section_of
+    sections_in_order first_string_in sec_label program_name hymns_in join
 
 // ---------------------------------------------------------------------
 // the `section` coordinate -- an ordered id path (like `name`): nesting
