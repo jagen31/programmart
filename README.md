@@ -15,7 +15,6 @@ from the Programmart used in the tonart concert compositions.
 | `bg "color"` | an object: a section's background colour |
 | `program_title "…"` | an object: the whole program's title |
 | `piece id` | an object: a named piece |
-| `hymn_number_to_title` | a rewriter: each `hymn_number` → an `art_title` from the hymnal |
 | `program_text` | a realizer: the program as plain text |
 | `program_html` | a realizer: the program as a self-contained HTML page, each section tinted by its `bg` |
 
@@ -82,10 +81,9 @@ def src = realize program_scribble: order_of_service
 render_scribble_html(src, "program-scores", "program")
 ```
 
-`hymn_number_to_score` (in `hymnal.rhm`) turns a `hymn_number` into notes
-from a tune registry, so a section with a hymn number engraves its tune;
-each section is tinted by its `bg`, and multi-voice music engraves as one
-staff per `voice`.
+Notes placed in a section are engraved as its score; each section is
+tinted by its `bg`, and multi-voice music engraves as one staff per
+`voice`.
 
 This bridges programmart and tonart4, so it lives in its own module (the
 core is facade-only). Engraving needs the `lilypond` CLI; rendering needs
@@ -98,7 +96,6 @@ core is facade-only). Engraving needs the `lilypond` CLI; rendering needs
   - `main.rhm` — public entry (re-exports facade + the program lib)
   - `private/lib.rhm` — the vocabulary, the hymnal, and the text/HTML realizers
   - `scribble.rhm` — the Scribble realizer (engraved scores, section backgrounds)
-  - `hymnal.rhm` — `hymn_number_to_score` (tune registry -> notes, via tonart4)
   - `tests/demo.rhm` — a worked example
 - `programmart/` — the metapackage
 

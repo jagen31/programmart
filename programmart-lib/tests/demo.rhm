@@ -26,16 +26,6 @@ println("=== program_text ===")
 println(realize program_text:
           order_of_service)
 
-println("")
-println("=== hymn_number_to_title fills titles from the hymnal ===")
-println(realize program_text:
-          program_title "Hymns Only"
-          at [section a]:
-            hymn_number 1
-          at [section b]:
-            hymn_number 9
-          hymn_number_to_title)
-
 def html = realize program_html:
              order_of_service
              color_program

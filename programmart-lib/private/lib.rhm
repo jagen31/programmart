@@ -12,7 +12,6 @@
 //   bg "color"            an object: a section's background colour
 //   program_title "..."   an object: the whole program's title
 //   piece <id>            an object: a named piece
-//   hymn_number_to_title  a rewriter: hymn_number -> its title
 //   program_html          a realizer: render the program as an HTML page
 // =====================================================================
 
@@ -22,10 +21,9 @@ import:
 export:
   section
   art_title hymn_number bg program_title piece
-  hymn_number_to_title
   program_html program_text
   meta:
-    hymnal_title expr_section section_of
+    expr_section section_of
     sections_in_order first_string_in sec_label program_name hymns_in join
 
 // ---------------------------------------------------------------------
@@ -68,25 +66,10 @@ define_object bg             // bg "goldenrod"
 define_object program_title  // program_title "PL Songbook"
 define_object piece          // piece some-id
 
-// ---------------------------------------------------------------------
-// a small hymnal: number -> title.  Extend to taste (or shadow with your
-// own rewriter); `hymn_number_to_title` looks names up here.
-// ---------------------------------------------------------------------
-
-meta:
-  fun hymnal_title(n):
-    match n
-    | 1: "Holy, Holy, Holy"
-    | 3: "Come Thou Fount of Every Blessing"
-    | 8: "Be Thou My Vision"
-    | 9: "Come Thou Fount (Nettleton)"
-    | ~else: "Hymn " +& to_string(n)
-
-// hymn_number n  ->  art_title <its title>, keeping the section
-define_mapping_rewriter hymn_number_to_title over hymn_number:
-  fun (stx, h):
-    def title = Syntax.make(hymnal_title(args_of(h)[0].unwrap()))
-    [set_ctxt('art_title $title', get_ctxt(h))]
+// (A hymnal -- mapping hymn numbers to titles and tunes -- belongs to a
+// data source outside this library, so `hymn_number_to_title` /
+// `hymn_number_to_score` are not defined here.  `hymn_number` is just the
+// vocabulary; write a rewriter against your own hymnal to resolve it.)
 
 // ---------------------------------------------------------------------
 // realizers
