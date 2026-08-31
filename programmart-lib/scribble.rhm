@@ -28,6 +28,7 @@ import:
   lib("racket/path.rkt") as rpath
   meta:
     lib("racket/file.rkt") as mfile
+    lib("racket/base.rkt") as mrkt
 
 export:
   program_scribble
@@ -45,6 +46,11 @@ meta:
       .filter(~keep: fun (e): section_of(e, secs))
       .sort(fun (a, b): index_less(expr_index(a), expr_index(b)))
   fun sec_id(secs): join(secs.map(fun (s): to_string(s)), "-")
+  // absolute path for an image reference, so the emitted Scribble document
+  // resolves it no matter what directory `raco scribble` is run from (the
+  // files are written relative to *this* realize's cwd, which need not be
+  // the render cwd)
+  fun abspath(p): mrkt.#{path->string}(mrkt.#{path->complete-path}(p))
   // escape Scribble's active characters in body text
   fun esc(s):
     def out = Box("")
@@ -105,19 +111,20 @@ define_realizer program_scribble:
         def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
         def color = first_string_in(ctxt, #'bg, secs) || "transparent"
         def notes = notes_in(ctxt, secs)
-        // score: one staff per voice, with any images hung over the staves
-        def score:
+        def imgs = images_in(ctxt, secs)
+        // a section with notes: one engraved score, its images hung over
+        // the staves.  a section without: its images stand alone (e.g. slide
+        // pictures), each on its own line.
+        def body:
           if notes.length() > 0
           | (block:
-               def src = ly_document_staves(notes_to_staves(notes, 4, images_in(ctxt, secs)))
+               def src = ly_document_staves(notes_to_staves(notes, 4, imgs))
                def png = engrave(src, dir, sec_id(secs), "png")
-               "@image[\"" +& png +& "\"]{score}\n")
-          | ""
-        def slides:
-          for values(s = "") (sl in slides_in(ctxt, secs), i in 0 ..):
-            s +& slide_scribble(sl, dir, sec_id(secs) +& "-slide-" +& to_string(i))
+               "@image[\"" +& abspath(png) +& "\"]{score}\n")
+          | (for values(a = "") (im in imgs):
+               a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n")
         acc +& "@bgsection[\"" +& color +& "\"]{" +& esc(label) +& "}{\n"
-          +& score +& slides +& "}\n\n"
+          +& body +& "}\n\n"
     "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& esc(title) +& "}\n\n" +& blocks
 
 // `raco` next to the running `racket` (falls back to PATH)
