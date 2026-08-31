@@ -1,0 +1,151 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// Programmart -- concert programs, the program instantiation of facade
+// (Art 4), in Rhombus.  Ported from the Programmart used in the tonart
+// concert compositions.
+//
+// The vocabulary (cf. the FARM talk's BNF):
+//   section <id> ...      a coordinate: which section a form belongs to
+//   art_title "..."       an object: a section's printed title
+//   hymn_number n         an object: a hymn by its number in the hymnal
+//   bg "color"            an object: a section's background colour
+//   program_title "..."   an object: the whole program's title
+//   piece <id>            an object: a named piece
+//   hymn_number_to_title  a rewriter: hymn_number -> its title
+//   program_html          a realizer: render the program as an HTML page
+// =====================================================================
+
+import:
+  facade open
+
+export:
+  section
+  art_title hymn_number bg program_title piece
+  hymn_number_to_title
+  program_html program_text
+  meta: hymnal_title expr_section section_of
+
+// ---------------------------------------------------------------------
+// the `section` coordinate -- an ordered id path (like `name`): nesting
+// appends, and a form is `within` a section when that section is a prefix
+// ---------------------------------------------------------------------
+
+define_coordinate section:
+  merge:
+    fun (l, r, _l, _r, _c):
+      cond
+      | l && r:
+          block:
+            let [a, ...] = args_of(l) ++ args_of(r)
+            'section $a ...'
+      | ~else: (r || l)
+  within:
+    fun (l, r, _l, _r, _c):
+      def ls = args_of(l).map(fun (a): a.unwrap())
+      def rs = args_of(r).map(fun (a): a.unwrap())
+      cond
+      | rs.length() > ls.length(): #false
+      | ~else: (for values(ok = #true) (x in rs, y in ls): ok && x == y)
+
+meta:
+  // the section id-path of a form (a list of symbols), or []
+  fun expr_section(e):
+    def c = context_ref(get_ctxt(e), #'section)
+    if c | args_of(c).map(fun (a): a.unwrap()) | []
+  // does a form sit in section `secs` (a list of symbols)?
+  fun section_of(e, secs): expr_section(e) == secs
+
+// ---------------------------------------------------------------------
+// objects
+// ---------------------------------------------------------------------
+
+define_object art_title      // art_title "Prelude"
+define_object hymn_number    // hymn_number 3
+define_object bg             // bg "goldenrod"
+define_object program_title  // program_title "PL Songbook"
+define_object piece          // piece some-id
+
+// ---------------------------------------------------------------------
+// a small hymnal: number -> title.  Extend to taste (or shadow with your
+// own rewriter); `hymn_number_to_title` looks names up here.
+// ---------------------------------------------------------------------
+
+meta:
+  fun hymnal_title(n):
+    match n
+    | 1: "Holy, Holy, Holy"
+    | 3: "Come Thou Fount of Every Blessing"
+    | 8: "Be Thou My Vision"
+    | 9: "Come Thou Fount (Nettleton)"
+    | ~else: "Hymn " +& to_string(n)
+
+// hymn_number n  ->  art_title <its title>, keeping the section
+define_mapping_rewriter hymn_number_to_title over hymn_number:
+  fun (stx, h):
+    def title = Syntax.make(hymnal_title(args_of(h)[0].unwrap()))
+    [set_ctxt('art_title $title', get_ctxt(h))]
+
+// ---------------------------------------------------------------------
+// realizers
+// ---------------------------------------------------------------------
+
+meta:
+  // join a list of strings with a separator
+  fun join(strs, sep):
+    for values(acc = "") (s in strs, i in 0 ..):
+      if i == 0 | s | acc +& sep +& s
+  // the distinct section id-paths present among the given forms, in
+  // first-appearance order
+  fun sections_in_order(forms):
+    for values(acc = []) (e in forms):
+      def s = expr_section(e)
+      if s.length() > 0 && !(acc.filter(~keep: fun (x): x == s).length() > 0)
+      | acc ++ [s]
+      | acc
+  // the string arg of the first form of type `name` in `secs`, or #false
+  fun first_string_in(ctxt, name, secs):
+    def fs = context_ref_all(ctxt, name).filter(~keep: fun (e): section_of(e, secs))
+    if fs.length() > 0 | args_of(fs[0])[0].unwrap() | #false
+  fun sec_label(secs): join(secs.map(fun (s): to_string(s)), ".")
+  fun program_name(ctxt):
+    def t = context_ref(ctxt, #'program_title)
+    if t | args_of(t)[0].unwrap() | "Program"
+  fun hymns_in(ctxt, secs):
+    context_ref_all(ctxt, #'hymn_number).filter(~keep: fun (e): section_of(e, secs))
+
+// program_text: a plain-text program (title, then each section's title
+// and any hymn numbers)
+define_realizer program_text:
+  fun (ctxt):
+    def body:
+      for values(acc = "") (secs in sections_in_order(ctxt)):
+        def title = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
+        def hymns = hymns_in(ctxt, secs)
+        def hymn_line:
+          if hymns.length() > 0
+          | "  (hymns " +& join(hymns.map(fun (h): to_string(args_of(h)[0].unwrap())), ", ") +& ")"
+          | ""
+        acc +& "\n" +& sec_label(secs) +& ": " +& title +& hymn_line
+    program_name(ctxt) +& body
+
+// program_html: the program as a self-contained HTML page, each section
+// tinted with its `bg`
+define_realizer program_html:
+  fun (ctxt):
+    def title = program_name(ctxt)
+    def sections:
+      for values(acc = "") (secs in sections_in_order(ctxt)):
+        def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
+        def color = first_string_in(ctxt, #'bg, secs) || "transparent"
+        def hymn_items:
+          for values(s = "") (h in hymns_in(ctxt, secs)):
+            s +& "<li>Hymn " +& to_string(args_of(h)[0].unwrap()) +& "</li>"
+        acc
+          +& "  <section style=\"background: " +& color +& "; padding: 1em; margin: .5em 0;\">\n"
+          +& "    <h2>" +& label +& "</h2>\n"
+          +& (if hymn_items == "" | "" | "    <ul>" +& hymn_items +& "</ul>\n")
+          +& "  </section>\n"
+    "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>"
+      +& title +& "</title></head>\n<body>\n  <h1>" +& title +& "</h1>\n"
+      +& sections +& "</body></html>\n"

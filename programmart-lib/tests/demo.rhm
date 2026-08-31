@@ -1,0 +1,43 @@
+#lang rhombus/and_meta
+
+// Programmart -- a small concert program, realized to text and to HTML.
+// Mirrors the FARM talk: sections carry titles, hymn numbers, and a bg
+// colour; a color sub-program tints each section by its coordinate.
+
+import: programmart open
+
+// the program: two sections, each titled, with hymns; plus a color
+// sub-program that lands a bg on each section by its coordinate
+define_art order_of_service:
+  program_title "PL Songbook"
+  at [section prelude]:
+    art_title "Prelude"
+    hymn_number 3
+  at [section opening_song]:
+    art_title "Opening Song"
+    hymn_number 8
+    hymn_number 9
+
+define_art color_program:
+  at [section prelude]:      bg "goldenrod"
+  at [section opening_song]: bg "lightblue"
+
+println("=== program_text ===")
+println(realize program_text:
+          order_of_service)
+
+println("")
+println("=== hymn_number_to_title fills titles from the hymnal ===")
+println(realize program_text:
+          program_title "Hymns Only"
+          at [section a]:
+            hymn_number 1
+          at [section b]:
+            hymn_number 9
+          hymn_number_to_title)
+
+def html = realize program_html:
+             order_of_service
+             color_program
+println("")
+println("=== program_html length: " +& to_string(html.length()) +& " chars ===")

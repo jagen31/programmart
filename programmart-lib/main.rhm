@@ -1,0 +1,11 @@
+#lang rhombus/and_meta
+
+// Programmart -- concert programs for facade (Art 4), in Rhombus.  The
+// public entry point: re-exports facade (the engine + standard
+// coordinates) and the program library.
+import:
+  facade
+  "private/lib.rhm"
+export:
+  all_from(.facade)
+  all_from(.lib)
