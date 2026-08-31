@@ -12,9 +12,13 @@ Buttons:
   service) with programmart's `program_scribbler` realizer and renders it
   as a document: headings, section colors, dialogue, resource/hymn titles,
   lilypond scores, dancer figures, slides. **Working.**
-- **Play ▸** — realizes the `program_audio` art with tonart4's
-  `music_rsound` realizer into an rsound and plays it. **Working.** (Stop
-  ends it; the transport's Perform/Prev/Next are inert on the rsound path.)
+- **Play ▸** — performs the `program_audio` art. programmart's
+  `program_performer` realizer compiles it into a *timeline* of
+  instructions in section order — a mark per section, its dialogue, and its
+  music — and the player walks it: each section's music is synthesized
+  (tonart4's `music_rsound`) and played in turn, and each spoken line goes
+  to macOS `say` (stage directions in a second voice). **Working.** (Stop
+  ends it; the transport's Perform/Prev/Next are inert on this path.)
 - **Strudel ▸** — will realize a `program_strudel` and hand it to a Strudel
   REPL on localhost. **Pending** the strudel realizer — the button reports
   that for now.
@@ -133,14 +137,16 @@ for repo-root-relative paths.
 ## What's here vs. deferred
 
 **Here and working:** the plugin, the Scribble button (document), the Play
-button (rsound audio via `music_rsound`), the driver-module realization,
-display-list rendering, section colors, auto-render, repo-root retry.
+button (a section-by-section performance: music via `music_rsound`,
+dialogue via `say`), the driver-module realization, display-list
+rendering, section colors, auto-render, repo-root retry.
 
-**Audio caveat.** `music_rsound` mixes every tone by its interval, with no
-notion of sections in time — so `program_audio` over a whole multi-section
-program plays all its sections *at once*, and its length is the longest
-piece. Shape `program_audio` to taste (a single piece, or sections spread
-out in time) for a musical result; the plugin just realizes and plays it.
+**Audio timing.** `program_performer` treats one interval unit as a quarter
+note at ~120 bpm, and mixes each section's tones with `rs_render`
+(rsound's `assemble`, one pass). Each section is a separate rsound, played
+in order, so pieces don't collide — but there's no gap/tempo control beyond
+that yet. Music is a thunk per section, synthesized when the player reaches
+it, so Play starts promptly.
 
 **Deferred:**
 

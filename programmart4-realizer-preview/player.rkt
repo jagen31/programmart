@@ -4,30 +4,37 @@
 ;;
 ;;   racket player.rkt <file> <working-dir> <tempo> <volume> <out> <mode>
 ;;
-;; Realizes the file's `program_audio` art (falling back to `program`)
-;; with tonart4's `music_rsound` realizer into an rsound, and plays it.
-;; This is the rsound path -- no ChucK, no dialogue, no slides; just the
-;; program's notes sounding.
+;; Realizes the file's `program_audio` art (falling back to `program`) with
+;; programmart's `program_performer` realizer into a *timeline* -- a flat
+;; list of instructions in section order -- and performs it:
 ;;
-;; A `program_audio` is a `define_art`, and `realize` runs inside a module
-;; that imports it, so -- as extract.rkt does for the document -- we write
-;; a small driver module next to the source, instantiate it, and read the
-;; realized rsound back.  Building the sound happens on that
-;; `dynamic-require`, which can take a while for a big program; its output
-;; is pointed at stderr so the status stream on stdout stays clean.
+;;   (list "mark"   title)                a section marker (reported)
+;;   (list "speak"  speaker text)         a line, spoken with `say`
+;;   (list "direct" text)                 a stage direction, spoken (other voice)
+;;   (list "music"  thunk secs)           call the thunk for an rsound, play it,
+;;                                          hold `secs` seconds
+;;
+;; The timeline is plain data with rsound *thunks*, so each section is only
+;; synthesized when the player reaches it -- playback starts promptly and
+;; the wait is spread across the piece.  As extract.rkt does, we write a
+;; small driver module next to the source, instantiate it, and read the
+;; timeline back (the realize/synthesis output is pointed at stderr so the
+;; status stream on stdout stays clean).
 ;;
 ;; Stop: the panel closes our stdin (or sends `stop`); a reader thread sees
-;; it, stops playback, and exits.  `tempo` / `out` / `mode` are accepted
+;; it, stops sound, and the walk ends.  `tempo`/`out`/`mode` are accepted
 ;; for protocol compatibility with the panel but unused on this path.
 
 (require racket/port
          racket/path
          racket/file
          racket/string
+         racket/system
          (only-in rsound play/proc stop rs-frames default-sample-rate))
 
-;; Progress goes to the real stdout; the realize phase is pointed at stderr
-;; (below), so this parameter keeps hold of the channel the panel reads.
+(define SAY "/usr/bin/say")
+(define DIRECTION-VOICE "Daniel")   ; stage directions in a different voice
+
 (define progress-out (make-parameter (current-output-port)))
 (define (report fmt . args)
   (displayln (apply format fmt args) (progress-out))
@@ -37,8 +44,6 @@
 ;; which art to realize
 ;; ---------------------------------------------------------------------------
 
-;; A Rhombus `define_art` exports into facade's binding space, listed under
-;; the `(0 . facade/af)` group key by `module->exports`.
 (define (art-exports path)
   (dynamic-require path 0)
   (define-values (vars stxs) (module->exports path))
@@ -58,22 +63,18 @@
 ;; driver module
 ;; ---------------------------------------------------------------------------
 
-;; `rs_render` (which `music_rsound` emits a call to) resolves in tonart4's
-;; own scope, so the driver only needs tonart4/main and the source; it does
-;; not import rsound itself.
 (define (driver-text user-basename art)
   (format (string-append
            "#lang rhombus/and_meta\n"
            "import:\n"
+           "  lib(\"programmart/audio.rhm\") open\n"
            "  lib(\"tonart4/main.rhm\") open\n"
            "  ~s open\n"
-           "export: snd\n"
-           "def snd = realize music_rsound: ~a\n")
+           "export: timeline\n"
+           "def timeline = realize program_performer: ~a\n")
           user-basename
           art))
 
-;; write the driver beside the source, hand it to `proc`, and clean up
-;; (the driver and the `.zo` compiled/ leaves behind)
 (define (call-with-driver dir text proc)
   (define drv (make-temporary-file "realizer-audio~a.rhm" #f dir))
   (dynamic-wind
@@ -86,6 +87,14 @@
        (define zo (build-path dir "compiled" (path-replace-extension name #".zo")))
        (when (file-exists? zo) (delete-file zo))))))
 
+;; the timeline comes back as Rhombus values; events are lists indexable by
+;; position.  `list-ref` works on them (Rhombus PairLists are Racket lists).
+(define (ev-kind e) (list-ref e 0))
+
+;; speak `text`, optionally in `voice`; blocks until `say` finishes
+(define (speak! text [voice #f])
+  (apply system* SAY (append (if voice (list "-v" voice) '()) (list text))))
+
 ;; ---------------------------------------------------------------------------
 
 (module+ main
@@ -97,7 +106,6 @@
   (define dir (path-only path))
 
   (define stopped (box #f))
-  ;; The panel talks over stdin; any line, or EOF, means stop.
   (void
    (thread (lambda ()
              (let loop ()
@@ -106,12 +114,12 @@
                  [(eof-object? l) (set-box! stopped #t) (stop)]
                  [(string=? (string-trim l) "stop") (set-box! stopped #t) (stop)]
                  [else (loop)])))))
+  (define (stopped?) (unbox stopped))
 
   (parameterize ([progress-out (current-output-port)]
                  [current-directory wd]
                  [current-load-relative-directory dir]
-                 ;; keep realize/synthesis chatter off the status stream
-                 [current-output-port (current-error-port)])
+                 [current-output-port (current-error-port)])   ; realize chatter -> stderr
     (with-handlers ([(lambda (e) #t)
                      (lambda (e)
                        (with-handlers ([(lambda (_) #t) void]) (stop))
@@ -122,24 +130,37 @@
       (unless art
         (report "This module provides no `program_audio` or `program` art to play.")
         (exit 1))
-      (report "Rendering audio (~a)…" art)
-      (define snd
+      (report "Realizing (~a)…" art)
+      (define timeline
         (call-with-driver
          dir (driver-text (path->string (file-name-from-path path)) art)
-         (lambda (drv) (dynamic-require drv 'snd (lambda () #f)))))
-      (cond
-        [(not snd)
-         (report "The audio realizer produced no sound.")
-         (exit 1)]
-        [(unbox stopped) (exit 0)]
-        [else
-         (define secs (/ (rs-frames snd) (exact->inexact (default-sample-rate))))
-         (report "[1/1] playing ~a s — Stop to end" (real->decimal-string secs 1))
-         (play/proc snd)
-         (let wait ([left secs])
-           (when (and (> left 0) (not (unbox stopped)))
-             (sleep (min 0.2 left))
-             (wait (- left 0.2))))
-         (with-handlers ([(lambda (_) #t) void]) (stop))
-         (report (if (unbox stopped) "stopped" "done"))
-         (exit 0)]))))
+         (lambda (drv) (dynamic-require drv 'timeline (lambda () #f)))))
+      (unless (and timeline (pair? timeline))
+        (report "The performer produced an empty timeline.")
+        (exit 0))
+      (define total (length timeline))
+      (for ([e (in-list timeline)] [i (in-naturals 1)])
+        (unless (stopped?)
+          (case (ev-kind e)
+            [("mark")
+             (report "[~a/~a] ~a" i total (list-ref e 1))]
+            [("speak")
+             (report "[~a/~a] ~a" i total (list-ref e 1))
+             (speak! (list-ref e 2))]
+            [("direct")
+             (report "[~a/~a] (direction)" i total)
+             (speak! (list-ref e 1) DIRECTION-VOICE)]
+            [("music")
+             (define secs (list-ref e 2))
+             (report "[~a/~a] music ~a s" i total (real->decimal-string secs 1))
+             (define snd ((list-ref e 1)))         ; synthesize this section now
+             (unless (stopped?)
+               (play/proc snd)
+               (let wait ([left secs])
+                 (when (and (> left 0) (not (stopped?)))
+                   (sleep (min 0.2 left))
+                   (wait (- left 0.2)))))]
+            [else (void)])))
+      (with-handlers ([(lambda (_) #t) void]) (stop))
+      (report (if (stopped?) "stopped" "done"))
+      (exit 0))))

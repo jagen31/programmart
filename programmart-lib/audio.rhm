@@ -1,0 +1,88 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// programmart -- the audio realizer.
+//
+// `program_performer` renders a program into a flat *timeline* of playable
+// instructions, in section order -- the same idea as the tonart concert's
+// `program-chuck-realizer`, but producing rsound thunks instead of ChucK
+// source, so an ordinary player can walk it:
+//
+//   PairList("mark",   "Prelude")
+//   PairList("speak",  "PRESENTER", "Welcome to my Art demo!")
+//   PairList("direct", "the audience rises")
+//   PairList("music",  <thunk: () -> rsound>, 8.0)          // 8.0 seconds
+//
+// The timeline is plain data (a Racket list, for a Racket player), so the
+// thing that plays it -- playing each music thunk's rsound and speaking
+// each line with `say` -- is ordinary code with no sound card near the
+// macro level.  Music is a *thunk* so a section is synthesized only when
+// the player reaches it, not all up front.
+//
+// Expects the program already reduced to `tone`s (its notes converted, as
+// `program_audio` does), each carrying its section; the performer groups
+// them by section and mixes each section with `rs_render`.
+// =====================================================================
+
+import:
+  programmart open
+  lib("tonart4/main.rhm") open        // rs_render, tone, ...
+  meta:
+    lib("racket/base.rkt") as mrkt
+
+export:
+  program_performer
+
+meta:
+  fun tones_in(ctxt, secs):
+    context_ref_all(ctxt, #'tone).filter(~keep: fun (e): section_of(e, secs))
+  fun scripts_in(ctxt, secs):
+    context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
+
+define_realizer program_performer:
+  fun (ctxt):
+    def sr = 44100.0
+    // seconds per interval unit: one unit is a quarter, ~120 bpm
+    def spu = 0.5
+    // a lexical context for generated literals (so string/number literals
+    // resolve `#%literal` in the module the timeline is spliced into);
+    // borrow it from any form in scope
+    def ctx0 = head_id_of(ctxt[0])
+    fun str(s): Syntax.make(s, ctx0)
+    def events = for values(acc = []) (secs in sections_by_index(ctxt)):
+      def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
+      def mark = 'PairList("mark", $(str(label)))'
+      // the section's dialogue, in order
+      def script_evs = for values(sacc = []) (sc in scripts_in(ctxt, secs)):
+        for values(a = sacc) (it in (sc.group_property(#'inner) || [])):
+          cond
+          | head_of(it) == #'line:
+              def sp = str(mrkt.#{string-upcase}(to_string(args_of(it)[0].unwrap())))
+              def tx = str(to_string(args_of(it)[1].unwrap()))
+              a ++ ['PairList("speak", $sp, $tx)']
+          | head_of(it) == #'stage_direction:
+              def tx = str(to_string(args_of(it)[0].unwrap()))
+              a ++ ['PairList("direct", $tx)']
+          | ~else: a
+      // the section's music: mix its tones with rs_render, as a thunk
+      def toneset = tones_in(ctxt, secs)
+      def music_evs:
+        if toneset.length() > 0
+        | (block:
+             fun lit(v): Syntax.make(v, head_id_of(toneset[0]))
+             fun frames(x): lit(mrkt.#{inexact->exact}(math.round(x)))
+             def specs = for List (t in toneset):
+               def start = expr_start(t)
+               def end = expr_end(t)
+               def vs = context_ref_surrounding(ctxt, get_ctxt(t), #'volume)
+               def vol = if vs.length() > 0 | args_of(vs[0])[0].unwrap() | 1
+               '[$(lit(args_of(t)[0].unwrap())), $(lit(vol * 0.05)), $(frames((end - start) * sr * spu)), $(frames(start * sr * spu))]'
+             def maxend = for values(m = 0) (t in toneset):
+               def e = expr_end(t)
+               if e && e > m | e | m
+             let [sp, ...] = specs
+             ['PairList("music", fun (): rs_render([$sp, ...]), $(lit(maxend * spu)))'])
+        | []
+      acc ++ [mark] ++ script_evs ++ music_evs
+    let [ev, ...] = events
+    'PairList($ev, ...)'

@@ -570,7 +570,7 @@
     (define/public (ensure-rendered)
       (unless (or blocks in-flight?)
         (render-message! doc-text
-                         "Scribble realizes the module's `program_visual` art into a document here.\n\nPlay \u25b8 realizes `program_audio` with music_rsound and plays it.\n\nStrudel \u25b8 arrives with the strudel realizer; for now it reports that."
+                         "Scribble realizes the module's `program_visual` art into a document here.\n\nPlay \u25b8 performs `program_audio` section by section (music via music_rsound, dialogue spoken with say).\n\nStrudel \u25b8 arrives with the strudel realizer; for now it reports that."
                          zoom)))
 
     (define/public (shutdown)
@@ -588,7 +588,7 @@
     (update-transport-controls!)
 
     (render-message! doc-text
-                     "Scribble realizes the module's `program_visual` art into a document here.\n\nPlay \u25b8 realizes `program_audio` with music_rsound and plays it.\n\nStrudel \u25b8 arrives with the strudel realizer; for now it reports that."
+                     "Scribble realizes the module's `program_visual` art into a document here.\n\nPlay \u25b8 performs `program_audio` section by section (music via music_rsound, dialogue spoken with say).\n\nStrudel \u25b8 arrives with the strudel realizer; for now it reports that."
                      zoom)))
 
 ;; The shapes extract.rkt promises:
