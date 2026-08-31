@@ -1,29 +1,33 @@
 #lang rhombus/and_meta
 
 // programmart's Scribble realizer: a concert program whose sections carry
-// engraved scores.  Requires the `lilypond` CLI (to engrave) and `raco`
-// (to render); scores are written under ./program-scores/.
+// engraved scores (from hymn numbers) and background colours.  Requires
+// the `lilypond` CLI (to engrave) and `raco` (to render); scores are
+// written under ./program-scores/.
 
 import:
   programmart open
   lib("tonart4/main.rhm") open
+  lib("programmart/hymnal.rhm") open
   lib("programmart/scribble.rhm") open
 
 define_art order_of_service:
   program_title "Sunday Service"
   at [section prelude]:
     art_title "Prelude"
-    at [interval 0 1]: note g 0 4
-    at [interval 1 2]: note a 0 4
-    at [interval 2 4]: note b 0 4
+    hymn_number 1
   at [section opening_song]:
     art_title "Opening Song"
-    at [interval 0 2]: note c 0 5
-    at [interval 2 3]: note e 0 5
-    at [interval 3 4]: note g 0 5
+    hymn_number 9
+
+define_art color_program:
+  at [section prelude]:      bg "goldenrod"
+  at [section opening_song]: bg "lightblue"
 
 def src = realize program_scribble:
             order_of_service
-println("=== Scribble source (scores engraved under program-scores/) ===")
+            color_program
+            hymn_number_to_score
+println("=== Scribble source (colored sections + engraved hymn scores) ===")
 println(src)
-// to render to HTML:  render_scribble_html(src, "program-scores", "program")
+// render to HTML:  render_scribble_html(src, "program-scores", "program")

@@ -39,6 +39,16 @@ meta:
 // program_scribble: engrave each section's notes and assemble a Scribble
 // document (`#lang scribble/base`) referencing the score images.  Scores
 // are written under `dir` (default "program-scores"), created if needed.
+meta:
+  // a `#lang scribble/base` preamble defining `@bgsection[color]{title}`,
+  // a heading whose HTML gets that background colour
+  fun scribble_preamble():
+    "@(require scribble/core scribble/html-properties scribble/base)\n"
+      +& "@(define (bgsection color title . body)\n"
+      +& "   (nested #:style (style #f (list (attributes\n"
+      +& "     (list (cons 'style (string-append \"background:\" color \";padding:.6em 1em;margin:.6em 0;\"))))))\n"
+      +& "     (bold (larger title)) (linebreak) body))\n\n"
+
 define_realizer program_scribble:
   fun (ctxt):
     def dir = "program-scores"
@@ -47,16 +57,18 @@ define_realizer program_scribble:
     def blocks:
       for values(acc = "") (secs in sections_in_order(ctxt)):
         def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
+        def color = first_string_in(ctxt, #'bg, secs) || "transparent"
         def notes = notes_in(ctxt, secs)
+        // one staff per voice, engraved to a PNG
         def img:
           if notes.length() > 0
           | (block:
-               def src = ly_document(notes_to_lilypond(notes))
+               def src = ly_document_staves(notes_to_staves(notes))
                def path = engrave(src, dir, sec_id(secs), "png")
-               "@image[\"" +& path +& "\"]{score}\n\n")
+               "@image[\"" +& path +& "\"]{score}")
           | ""
-        acc +& "@section{" +& label +& "}\n\n" +& img
-    "#lang scribble/base\n\n@title{" +& title +& "}\n\n" +& blocks
+        acc +& "@bgsection[\"" +& color +& "\"]{" +& label +& "}{\n" +& img +& "\n}\n\n"
+    "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& title +& "}\n\n" +& blocks
 
 // `raco` next to the running `racket` (falls back to PATH)
 fun raco_cmd():

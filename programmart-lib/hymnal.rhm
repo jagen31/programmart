@@ -1,0 +1,48 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// programmart -- hymn numbers to scores.
+//
+// `hymn_number_to_score` looks a hymn up in a tune registry and lays its
+// melody out as tonart4 `note`s on the interval timeline, keeping the
+// hymn's section.  Pair it with tonart4's LilyPond realizer (e.g. the
+// `program_scribble` realizer) to engrave the tune.
+//
+// Bridges programmart + tonart4, so it lives outside the facade-only core.
+// =====================================================================
+
+import:
+  programmart open
+  lib("tonart4/main.rhm") open        // note
+
+export:
+  hymn_number_to_score
+  meta: hymn_tune
+
+meta:
+  // a tiny tune registry: hymn number -> [[pitch, accidental, octave,
+  // duration-in-quarters], ...].  Extend or shadow with your own.
+  fun hymn_tune(n):
+    match n
+    | 1:   // "do re mi fa sol"
+        [[#'c, 0, 4, 1], [#'d, 0, 4, 1], [#'e, 0, 4, 1], [#'f, 0, 4, 1], [#'g, 0, 4, 2]]
+    | 9:   // Nettleton, opening phrase
+        [[#'d, 0, 5, 1], [#'d, 0, 5, 1], [#'e, 0, 5, 1], [#'d, 0, 5, 1],
+         [#'g, 0, 5, 2], [#'g, 0, 5, 2], [#'a, 0, 5, 1], [#'g, 0, 5, 1], [#'f, 1, 5, 2]]
+    | ~else:
+        [[#'c, 0, 4, 4]]
+
+// hymn_number n  ->  the tune's notes, laid out in the hymn's section
+define_mapping_rewriter hymn_number_to_score over hymn_number:
+  fun (stx, h):
+    // notes inherit the hymn's coordinates (its section), minus any instant
+    def base_ctxt = remove_from_ctxt(get_ctxt(h), #'instant)
+    def t = Box(0)
+    for values(acc = []) (spec in hymn_tune(args_of(h)[0].unwrap())):
+      def p = Syntax.make(spec[0])
+      def a = Syntax.make(spec[1])
+      def o = Syntax.make(spec[2])
+      def s0 = Syntax.make(t.value)
+      def e0 = Syntax.make(t.value + spec[3])
+      t.value := t.value + spec[3]
+      acc ++ [set_ctxt('at [interval $s0 $e0]: note $p $a $o', base_ctxt)]
