@@ -58,6 +58,15 @@ meta:
       def c = to_string(ch)
       out.value := out.value +& (cond | c == "@": "@\"@\"" | c == "{": "@\"{\"" | c == "}": "@\"}\"" | ~else: c)
     out.value
+  // escape a string for use as a Racket string literal inside `[...]`
+  // (a `@cmd["a" "b"]{body}` bracket arg -- consecutive `{}{}` groups do
+  // NOT both reach the call, so titles ride in the brackets, not a group)
+  fun slit(s):
+    def out = Box("")
+    for (ch in to_string(s)):
+      def c = to_string(ch)
+      out.value := out.value +& (cond | c == "\\": "\\\\" | c == "\"": "\\\"" | ~else: c)
+    out.value
 
   // a `#lang scribble/base` preamble:
   //   @bgsection[color]{title}{body} -- a titled block whose HTML carries
@@ -68,7 +77,7 @@ meta:
     "@(require scribble/core scribble/html-properties scribble/base)\n"
       +& "@(define (styled s . body) (nested #:style (style #f (list (attributes (list (cons 'style s))))) body))\n"
       +& "@(define (bgsection color title . body)\n"
-      +& "   (styled (string-append \"background:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\")\n"
+      +& "   (styled (string-append \"background-color:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\")\n"
       +& "     (bold (larger title)) (linebreak) body))\n"
       +& "@(define (slideframe title . body)\n"
       +& "   (styled (string-append \"border:1px solid #888;border-radius:8px;background:#fff;\"\n"
@@ -94,9 +103,9 @@ meta:
       if notes.length() > 0
       | (block:
            def png = engrave(ly_document_staves(notes_to_staves(notes)), dir, tag, "png")
-           "@image[\"" +& png +& "\"]{score}\n")
+           "@image[\"" +& abspath(png) +& "\"]{score}\n")
       | ""
-    "@slideframe{" +& esc(args_of(s)[0].unwrap()) +& "}{\n"
+    "@slideframe[\"" +& slit(args_of(s)[0].unwrap()) +& "\"]{\n"
       +& (if items == "" | "" | "@itemlist[" +& items +& "]\n")
       +& (if codes == "" | "" | "@verbatim{\n" +& codes +& "}\n")
       +& music +& "}\n"
@@ -123,7 +132,7 @@ define_realizer program_scribble:
                "@image[\"" +& abspath(png) +& "\"]{score}\n")
           | (for values(a = "") (im in imgs):
                a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n")
-        acc +& "@bgsection[\"" +& color +& "\"]{" +& esc(label) +& "}{\n"
+        acc +& "@bgsection[\"" +& color +& "\" \"" +& slit(label) +& "\"]{\n"
           +& body +& "}\n\n"
     "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& esc(title) +& "}\n\n" +& blocks
 
