@@ -3,26 +3,30 @@
 // =====================================================================
 // programmart -- the Scribble realizer.
 //
-// `program_scribble` renders a concert program as Scribble source: a
-// title, and for each section its title and (if the section holds notes)
-// an engraved score, produced by tonart4's LilyPond realizer at realize
-// time.  `render_scribble_html` runs `raco scribble --html` on the source.
+// `program_scribble` renders a program as a Scribble document: the title,
+// then each section (in ix-- order) as a background-tinted block holding
+// its title, its engraved score (tonart4's LilyPond realizer, with any
+// `image`s -- e.g. dancer figures -- hung over the staves), and any
+// `slide`s.  `render_scribble_html` runs `raco scribble --html` on it.
 //
-// This bridges programmart (the program vocabulary) and tonart4 (music +
-// engraving), so it lives in its own module rather than the facade-only
-// core.
+// The realizer is generic: it renders `image` objects, never `arm_diagram`
+// directly -- convert poses to images with a rewriter first (as the
+// concert does).  It reads `note` / `image` / `slide` / `item` / `code_line`
+// by head, so a client's own such forms are handled without importing them.
+//
+// Bridges programmart + tonart4 (music + engraving), so it is its own
+// module rather than the facade-only core.
 // =====================================================================
 
 import:
   programmart open
-  lib("tonart4/main.rhm") open        // note, music, ...
-  lib("tonart4/lilypond.rhm") open    // engrave, notes_to_lilypond, ly_document
+  lib("tonart4/main.rhm") open
+  lib("tonart4/lilypond.rhm") open    // engrave, notes_to_staves, ...
   lib("racket/base.rkt") as rkt
   lib("racket/system.rkt") as sys
   lib("racket/file.rkt") as rfile
   lib("racket/path.rkt") as rpath
   meta:
-    lib("racket/base.rkt") as mrkt
     lib("racket/file.rkt") as mfile
 
 export:
@@ -30,24 +34,57 @@ export:
   render_scribble_html
 
 meta:
-  // the notes sitting in section `secs`
+  // section-relative selectors, by head symbol
   fun notes_in(ctxt, secs):
-    context_ref_all(ctxt, #'note).filter(~keep: fun (e): section_of(e, secs))
-  // a filename-safe id for a section path
+    (context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest))
+      .filter(~keep: fun (e): section_of(e, secs))
+  fun images_in(ctxt, secs):
+    context_ref_all(ctxt, #'image).filter(~keep: fun (e): section_of(e, secs))
+  fun slides_in(ctxt, secs):
+    context_ref_all(ctxt, #'slide)
+      .filter(~keep: fun (e): section_of(e, secs))
+      .sort(fun (a, b): index_less(expr_index(a), expr_index(b)))
   fun sec_id(secs): join(secs.map(fun (s): to_string(s)), "-")
+  // escape Scribble's active characters in body text
+  fun esc(s):
+    def out = Box("")
+    for (ch in to_string(s)):
+      def c = to_string(ch)
+      out.value := out.value +& (cond | c == "@": "@\"@\"" | c == "{": "@\"{\"" | c == "}": "@\"}\"" | ~else: c)
+    out.value
 
-// program_scribble: engrave each section's notes and assemble a Scribble
-// document (`#lang scribble/base`) referencing the score images.  Scores
-// are written under `dir` (default "program-scores"), created if needed.
-meta:
-  // a `#lang scribble/base` preamble defining `@bgsection[color]{title}`,
-  // a heading whose HTML gets that background colour
+  // a `#lang scribble/base` preamble: `@bgsection[color]{title}{body}` --
+  // a titled block whose HTML carries that background colour
   fun scribble_preamble():
     "@(require scribble/core scribble/html-properties scribble/base)\n"
       +& "@(define (bgsection color title . body)\n"
       +& "   (nested #:style (style #f (list (attributes\n"
-      +& "     (list (cons 'style (string-append \"background:\" color \";padding:.6em 1em;margin:.6em 0;\"))))))\n"
+      +& "     (list (cons 'style (string-append \"background:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\"))))))\n"
       +& "     (bold (larger title)) (linebreak) body))\n\n"
+
+  // one slide -> Scribble: bold title, bullets, code, and engraved music
+  fun slide_scribble(s, dir, tag):
+    def content = s.group_property(#'inner) || []
+    def items:
+      for values(b = "") (e in content):
+        cond
+        | head_of(e) == #'item || head_of(e) == #'subitem:
+            b +& "@item{" +& esc(args_of(e)[0].unwrap()) +& "}\n"
+        | ~else: b
+    def codes:
+      for values(c = "") (e in content):
+        if head_of(e) == #'code_line | c +& esc(args_of(e)[0].unwrap()) +& "\n" | c
+    def notes = content.filter(~keep: fun (e): head_of(e) == #'note || head_of(e) == #'music_rest)
+    def music:
+      if notes.length() > 0
+      | (block:
+           def png = engrave(ly_document_staves(notes_to_staves(notes)), dir, tag, "png")
+           "@image[\"" +& png +& "\"]{score}\n")
+      | ""
+    "@bold{" +& esc(args_of(s)[0].unwrap()) +& "}\n@linebreak[]\n"
+      +& (if items == "" | "" | "@itemlist[" +& items +& "]\n")
+      +& (if codes == "" | "" | "@verbatim{\n" +& codes +& "}\n")
+      +& music +& "@linebreak[]\n"
 
 define_realizer program_scribble:
   fun (ctxt):
@@ -55,20 +92,24 @@ define_realizer program_scribble:
     mfile.#{make-directory*}(dir)
     def title = program_name(ctxt)
     def blocks:
-      for values(acc = "") (secs in sections_in_order(ctxt)):
+      for values(acc = "") (secs in sections_by_index(ctxt)):
         def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
         def color = first_string_in(ctxt, #'bg, secs) || "transparent"
         def notes = notes_in(ctxt, secs)
-        // one staff per voice, engraved to a PNG
-        def img:
+        // score: one staff per voice, with any images hung over the staves
+        def score:
           if notes.length() > 0
           | (block:
-               def src = ly_document_staves(notes_to_staves(notes))
-               def path = engrave(src, dir, sec_id(secs), "png")
-               "@image[\"" +& path +& "\"]{score}")
+               def src = ly_document_staves(notes_to_staves(notes, 4, images_in(ctxt, secs)))
+               def png = engrave(src, dir, sec_id(secs), "png")
+               "@image[\"" +& png +& "\"]{score}\n")
           | ""
-        acc +& "@bgsection[\"" +& color +& "\"]{" +& label +& "}{\n" +& img +& "\n}\n\n"
-    "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& title +& "}\n\n" +& blocks
+        def slides:
+          for values(s = "") (sl in slides_in(ctxt, secs), i in 0 ..):
+            s +& slide_scribble(sl, dir, sec_id(secs) +& "-slide-" +& to_string(i))
+        acc +& "@bgsection[\"" +& color +& "\"]{" +& esc(label) +& "}{\n"
+          +& score +& slides +& "}\n\n"
+    "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& esc(title) +& "}\n\n" +& blocks
 
 // `raco` next to the running `racket` (falls back to PATH)
 fun raco_cmd():
