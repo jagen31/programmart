@@ -37,6 +37,17 @@
 (define AFPLAY "/usr/bin/afplay")   ; play a WAV, reliably, with no PortAudio
 (define DIRECTION-VOICE "Daniel")   ; stage directions in a different voice
 
+;; the slideshow executable ships next to the running racket; fall back to
+;; PATH, then a bare name
+(define SLIDESHOW
+  (let ([cand (and (path? (find-system-path 'exec-file))
+                   (let ([d (path-only (path->complete-path (find-system-path 'exec-file)))])
+                     (and d (build-path d "slideshow"))))])
+    (cond
+      [(and cand (file-exists? cand)) (path->string cand)]
+      [(find-executable-path "slideshow") => path->string]
+      [else "slideshow"])))
+
 (define progress-out (make-parameter (current-output-port)))
 (define (report fmt . args)
   (displayln (apply format fmt args) (progress-out))
@@ -93,6 +104,34 @@
 ;; position.  `list-ref` works on them (Rhombus PairLists are Racket lists).
 (define (ev-kind e) (list-ref e 0))
 
+;; Show the slide PNGs `paths` as a fullscreen slideshow: write a
+;; `#lang slideshow` deck (one slide per image, scaled to fit) and run the
+;; slideshow app.  Playback holds here -- the presenter clicks through and
+;; quits -- until it exits or Stop kills it.  (The concert player did the
+;; same, opening the deck with the slideshow app.)
+(define (show-slides! paths stop?)
+  (when (pair? paths)
+    (define tmp (make-temporary-file "realizer-slides~a.rkt"))
+    (dynamic-wind
+     void
+     (lambda ()
+       (call-with-output-file tmp #:exists 'truncate/replace
+         (lambda (o)
+           (displayln "#lang slideshow" o)
+           (for ([p (in-list paths)])
+             (fprintf o "(slide (scale-to-fit (bitmap ~s) 1000 700))\n" p))))
+       (define ss (process* SLIDESHOW (path->string tmp)))
+       (define ctl (list-ref ss 4))
+       (let loop ()
+         (cond
+           [(stop?) (with-handlers ([(lambda (_) #t) void]) (ctl 'kill))]
+           [(eq? 'running (ctl 'status)) (sleep 0.2) (loop)]
+           [else (void)]))
+       (close-input-port (list-ref ss 0))
+       (close-output-port (list-ref ss 1))
+       (close-input-port (list-ref ss 3)))
+     (lambda () (with-handlers ([(lambda (_) #t) void]) (delete-file tmp))))))
+
 ;; speak `text`, optionally in `voice`; blocks until `say` finishes
 (define (speak! text [voice #f])
   (apply system* SAY (append (if voice (list "-v" voice) '()) (list text))))
@@ -135,6 +174,10 @@
      (report "[~a/~a] music ~a s" i total (real->decimal-string (list-ref e 2) 1))
      (unless (stopped?)
        (play-sound! ((list-ref e 1)) stopped?))]      ; synthesize now
+    [("slide")
+     (report "[~a/~a] slides — holding until the deck is closed" i total)
+     (unless (stopped?)
+       (show-slides! (list-ref e 1) stopped?))]
     [else (void)]))
 
 ;; a one-line summary for the paused prompt in manual mode
@@ -144,6 +187,7 @@
     [("speak")  (format "~a: ~a" (list-ref e 1) (list-ref e 2))]
     [("direct") (format "(stage direction) ~a" (list-ref e 1))]
     [("music")  (format "music · ~a s" (real->decimal-string (list-ref e 2) 1))]
+    [("slide")  "slides"]
     [else       "item"]))
 
 (define (mark? e) (string=? (ev-kind e) "mark"))

@@ -38,6 +38,13 @@ meta:
     context_ref_all(ctxt, #'tone).filter(~keep: fun (e): section_of(e, secs))
   fun scripts_in(ctxt, secs):
     context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
+  // slide images in a section, in slide order (their `index`)
+  fun images_in(ctxt, secs):
+    context_ref_all(ctxt, #'image)
+      .filter(~keep: fun (e): section_of(e, secs))
+      .sort(fun (a, b): index_less(expr_index(a), expr_index(b)))
+  fun image_path(e):
+    match e | 'image $p': to_string(p.unwrap()) | ~else: ""
 
 define_realizer program_performer:
   fun (ctxt):
@@ -83,6 +90,15 @@ define_realizer program_performer:
              let [sp, ...] = specs
              ['PairList("music", fun (): rs_render([$sp, ...]), $(lit(maxend * spu)))'])
         | []
-      acc ++ [mark] ++ script_evs ++ music_evs
+      // the section's slides (if any) -> one `slide` event with their paths
+      def imgs = images_in(ctxt, secs)
+      def slide_evs:
+        if imgs.length() > 0
+        | (block:
+             def paths = for List (im in imgs): str(image_path(im))
+             let [p, ...] = paths
+             ['PairList("slide", PairList($p, ...))'])
+        | []
+      acc ++ [mark] ++ script_evs ++ slide_evs ++ music_evs
     let [ev, ...] = events
     'PairList($ev, ...)'
