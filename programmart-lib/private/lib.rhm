@@ -99,10 +99,15 @@ meta:
         | ah < bh: #true
         | ah > bh: #false
         | ~else: index_less([ar, ...], [br, ...])
-  // the `index` coordinate shared by the forms of section `secs`
+  // the `index` coordinate of section `secs` -- from a form that actually
+  // carries one (so a bg overlaid without an index doesn't hide it)
   fun section_index(ctxt, secs):
     def fs = ctxt.filter(~keep: fun (e): section_of(e, secs))
-    if fs.length() > 0 | expr_index(fs[0]) | []
+    def indexed = fs.filter(~keep: fun (e): expr_index(e).length() > 0)
+    cond
+    | indexed.length() > 0: expr_index(indexed[0])
+    | fs.length() > 0: expr_index(fs[0])
+    | ~else: []
   // the sections in program order -- sorted by their `ix--`/`index`, so a
   // program's declared order (via ix__) is honored
   fun sections_by_index(ctxt):
