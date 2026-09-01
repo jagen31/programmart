@@ -172,7 +172,9 @@ meta:
         // (resource / hymn titles), then its score/slides
         acc +& "@bgsection[\"" +& color +& "\" \"" +& slit(label) +& "\"]{\n"
           +& script_paras(ctxt, secs) +& text_paras(ctxt, secs) +& body +& "}\n\n"
-    "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& esc(title) +& "}\n\n" +& blocks
+    "#lang scribble/base\n\n" +& scribble_preamble()
+      +& (if title | "@title{" +& esc(title) +& "}\n\n" | "")
+      +& blocks
 
 define_realizer program_scribbler:
   fun (ctxt): program_scribble_source(ctxt, "program-scores")
@@ -224,7 +226,7 @@ meta:
   // a stable file name from the art_program's own coordinates
   fun program_tag(ap):
     def nm = join(expr_names(ap).map(fun (n): to_string(n)), "-")
-    "embed-" +& (if nm == "" | "prog" | nm)
+    "embed-" +& (if nm == "" | "prog" | nm) +& "-" +& Symbol.gen()
 
 define_mapping_rewriter programs_to_images over art_program:
   fun (stx, ap):

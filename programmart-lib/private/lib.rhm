@@ -119,9 +119,10 @@ meta:
     def fs = context_ref_all(ctxt, name).filter(~keep: fun (e): section_of(e, secs))
     if fs.length() > 0 | args_of(fs[0])[0].unwrap() | #false
   fun sec_label(secs): join(secs.map(fun (s): to_string(s)), ".")
+  // the program's title, or #false if it declares none (no default)
   fun program_name(ctxt):
     def t = context_ref(ctxt, #'program_title)
-    if t | args_of(t)[0].unwrap() | "Program"
+    if t | args_of(t)[0].unwrap() | #false
   fun hymns_in(ctxt, secs):
     context_ref_all(ctxt, #'hymn_number).filter(~keep: fun (e): section_of(e, secs))
 
@@ -138,7 +139,8 @@ define_realizer program_text:
           | "  (hymns " +& join(hymns.map(fun (h): to_string(args_of(h)[0].unwrap())), ", ") +& ")"
           | ""
         acc +& "\n" +& sec_label(secs) +& ": " +& title +& hymn_line
-    program_name(ctxt) +& body
+    def t = program_name(ctxt)
+    (if t | t | "") +& body
 
 // program_html: the program as a self-contained HTML page, each section
 // tinted with its `bg`
@@ -158,5 +160,6 @@ define_realizer program_html:
           +& (if hymn_items == "" | "" | "    <ul>" +& hymn_items +& "</ul>\n")
           +& "  </section>\n"
     "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>"
-      +& title +& "</title></head>\n<body>\n  <h1>" +& title +& "</h1>\n"
+      +& (if title | title | "") +& "</title></head>\n<body>\n"
+      +& (if title | "  <h1>" +& title +& "</h1>\n" | "")
       +& sections +& "</body></html>\n"
