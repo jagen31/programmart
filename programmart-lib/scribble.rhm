@@ -41,6 +41,10 @@ meta:
       .filter(~keep: fun (e): section_of(e, secs))
   fun images_in(ctxt, secs):
     context_ref_all(ctxt, #'image).filter(~keep: fun (e): section_of(e, secs))
+  // the first form of type `name` in `secs`, or #false
+  fun first_in(ctxt, name, secs):
+    def fs = context_ref_all(ctxt, name).filter(~keep: fun (e): section_of(e, secs))
+    if fs.length() > 0 | fs[0] | #false
   fun scripts_in(ctxt, secs):
     context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
   // a section's `text` lines (e.g. a resource / hymn title standing in for
@@ -148,7 +152,9 @@ define_realizer program_scribbler:
         def body:
           if notes.length() > 0
           | (block:
-               def src = ly_document_staves(notes_to_staves(notes, 4, imgs))
+               // honour the section's own time signature (e.g. 3/4)
+               def [bar_len, time_str] = time_sig_info(first_in(ctxt, #'time_sig, secs))
+               def src = ly_document_staves(notes_to_staves(notes, bar_len, imgs, time_str))
                // crop tight to the music -- no A4 page whitespace around it
                def png = engrave_cropped(src, dir, sec_id(secs), "png")
                "@image[\"" +& abspath(png) +& "\"]{score}\n")
