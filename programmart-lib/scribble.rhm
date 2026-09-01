@@ -148,24 +148,34 @@ meta:
   fun program_scribble_source(ctxt, dir):
     mfile.#{make-directory*}(dir)
     def title = program_name(ctxt)
+    def all_secs = sections_by_index(ctxt)
+    // engrave every section's score up front, in ONE parallel batch (each
+    // lilypond run is independent), then look the PNGs up while building the
+    // document -- much faster than one lilypond process per section
+    def note_secs = all_secs.filter(~keep: fun (secs): notes_in(ctxt, secs).length() > 0)
+    def jobs = for List (secs in note_secs):
+      def notes = notes_in(ctxt, secs)
+      def imgs = images_in(ctxt, secs)
+      def [bar_len, time_str] = time_sig_info(first_in(ctxt, #'time_sig, secs))
+      [ly_document_staves(notes_to_staves(notes, bar_len, imgs, time_str)), dir, sec_id(secs)]
+    def pngs = engrave_cropped_all(jobs)
+    // pngs are in note_secs order; walk sections and pull the next one for
+    // each that has a score
+    def png_i = Box(0)
     def blocks:
-      for values(acc = "") (secs in sections_by_index(ctxt)):
+      for values(acc = "") (secs in all_secs):
         def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
         def color = first_string_in(ctxt, #'bg, secs) || "transparent"
-        def notes = notes_in(ctxt, secs)
         def imgs = images_in(ctxt, secs)
-        // a section with notes: one engraved score, its images hung over
-        // the staves.  a section without: its images stand alone (e.g. slide
-        // pictures), each on its own line.
+        // a section with notes: its (already engraved) score.  a section
+        // without: its images stand alone (e.g. slide pictures), each on its
+        // own line.
         def body:
-          if notes.length() > 0
+          if notes_in(ctxt, secs).length() > 0
           | (block:
-               // honour the section's own time signature (e.g. 3/4)
-               def [bar_len, time_str] = time_sig_info(first_in(ctxt, #'time_sig, secs))
-               def src = ly_document_staves(notes_to_staves(notes, bar_len, imgs, time_str))
-               // crop tight to the music -- no A4 page whitespace around it
-               def png = engrave_cropped(src, dir, sec_id(secs), "png")
-               "@image[\"" +& abspath(png) +& "\"]{score}\n")
+               def p = pngs[png_i.value]
+               png_i.value := png_i.value + 1
+               "@image[\"" +& abspath(p) +& "\"]{score}\n")
           | (for values(a = "") (im in imgs):
                a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n")
         // the spoken script leads the section, then any `text` lines
