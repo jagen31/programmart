@@ -40,7 +40,7 @@
          racket/class
          racket/string
          scribble/core
-         "scribble-preview.rkt")
+         programmart/private/scribble-preview)
 
 (provide extract-result)
 

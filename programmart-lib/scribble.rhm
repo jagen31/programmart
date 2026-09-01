@@ -20,6 +20,7 @@
 
 import:
   programmart open
+  lib("programmart/resources.rhm") open   // art_program, program_pick
   lib("tonart4/main.rhm") open
   lib("tonart4/lilypond.rhm") open    // engrave, notes_to_staves, ...
   lib("racket/base.rkt") as rkt
@@ -29,10 +30,14 @@ import:
   meta:
     lib("racket/file.rkt") as mfile
     lib("racket/base.rkt") as mrkt
+    lib("programmart/private/scribble-preview.rkt") as mprev   // doc->display-list
+    lib("programmart/private/dl-draw.rkt") as mdraw            // display-list->png
 
 export:
   program_scribbler
   render_scribble_html
+  programs_to_images
+  meta: program_scribble_source render_program_png
 
 meta:
   // section-relative selectors, by head symbol
@@ -135,9 +140,12 @@ meta:
       +& (if codes == "" | "" | "@verbatim{\n" +& codes +& "}\n")
       +& music +& "}\n"
 
-define_realizer program_scribbler:
-  fun (ctxt):
-    def dir = "program-scores"
+meta:
+  // build the `#lang scribble/base` document string for a program `ctxt`,
+  // engraving its scores under `dir`.  Exposed so other realizers (e.g.
+  // gestalt's, embedding a program on a shape's face) can render a program
+  // without going through the `program_scribbler` realizer form.
+  fun program_scribble_source(ctxt, dir):
     mfile.#{make-directory*}(dir)
     def title = program_name(ctxt)
     def blocks:
@@ -166,6 +174,9 @@ define_realizer program_scribbler:
           +& script_paras(ctxt, secs) +& text_paras(ctxt, secs) +& body +& "}\n\n"
     "#lang scribble/base\n\n" +& scribble_preamble() +& "@title{" +& esc(title) +& "}\n\n" +& blocks
 
+define_realizer program_scribbler:
+  fun (ctxt): program_scribble_source(ctxt, "program-scores")
+
 // `raco` next to the running `racket` (falls back to PATH)
 fun raco_cmd():
   def r = rkt.#{find-executable-path}(rkt.#{find-system-path}(rkt.#{string->symbol}("exec-file")))
@@ -182,3 +193,47 @@ fun render_scribble_html(source, dir, name):
   rkt.#{close-output-port}(f)
   sys.#{system}("\"" +& raco_cmd() +& "\" scribble --dest " +& dir +& " " +& scrbl)
   dir +& "/" +& name +& ".html"
+
+// ---------------------------------------------------------------------
+// programs_to_images: render an embedded program to a PNG picture of it,
+// so a shape realizer (gestalt) can hang it on a face.  Each `art_program`
+// in scope is realized with the scribble realizer, that document is
+// rendered to HTML and shot to a PNG by headless Chrome, and the
+// art_program is replaced by an `image` (carrying its coordinates -- e.g.
+// gestalt's `name`/`face`).  Everything runs at rewrite time, like the
+// other image rewriters.
+// ---------------------------------------------------------------------
+
+meta:
+  // scribble `source` -> a PNG of the rendered program; returns its path.
+  // Write the source to a temp `.scrbl`, take its `doc` (no raco/browser --
+  // a `#lang scribble/base` module just provides `doc`), turn it into the
+  // display list `scribble-preview` builds, and paint that into a bitmap
+  // with `dl-draw` (gui-free racket/draw).  Sized exactly to the program.
+  fun render_program_png(source, dir, name):
+    mfile.#{make-directory*}(dir)
+    def scrbl = dir +& "/" +& name +& ".scrbl"
+    def f = mrkt.#{open-output-file}(scrbl, ~exists: #'replace)
+    mrkt.#{write-string}(source, f)
+    mrkt.#{close-output-port}(f)
+    def doc = mrkt.#{dynamic-require}(mrkt.#{string->path}(scrbl), #'doc, fun (): #false)
+    def png = mrkt.#{path->string}(mrkt.#{path->complete-path}(dir +& "/" +& name +& ".png"))
+    if doc
+    | mdraw.#{display-list->png}(mprev.#{doc->display-list}(doc), png)
+    | png
+  // a stable file name from the art_program's own coordinates
+  fun program_tag(ap):
+    def nm = join(expr_names(ap).map(fun (n): to_string(n)), "-")
+    "embed-" +& (if nm == "" | "prog" | nm)
+
+define_mapping_rewriter programs_to_images over art_program:
+  fun (stx, ap):
+    def sub = program_pick(ap, #'html)          // the printable variant
+    if sub
+    | (block:
+         def sctxt = rewrite(sub)
+         def png = render_program_png(program_scribble_source(sctxt, "gestalt-embeds"),
+                                      "gestalt-embeds", program_tag(ap))
+         def path = Syntax.make(png)
+         [set_ctxt('image $path', remove_from_ctxt(get_ctxt(ap), #'art_id))])
+    | []

@@ -8,7 +8,8 @@
     "gui-lib"
     "scribble-lib"
     "drracket-plugin-lib"
-    "rhombus-lib"))
+    "rhombus-lib"
+    "programmart-lib"))   ; shared doc->display-list
 
 (define version "0.0.1")
 (define pkg-desc "Realizer Preview -- a DrRacket pane that realizes a programmart (Rhombus) composition")
