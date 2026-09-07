@@ -188,14 +188,10 @@ meta:
     def cl = program_variants(ap).filter(~keep: fun (c): head_of(c) == name)
     if cl.length() > 0 | body_of(cl[0]) | #false
   // a fresh art_program holding `variants`, keeping the original's coordinates
-  // (and any per-face audio source stashed by stash_face_audio, so it survives
-  // rewrite_in_program's rebuild on the way to programs_to_images)
   fun rebuild_art_program(ap, variants):
     block:
       let [v, ...] = variants
-      def fresh = set_ctxt('art_program: $v ; ...', get_ctxt(ap))
-      def aud = ap.group_property(#'program_audio_source)
-      if aud | fresh.group_property(#'program_audio_source, aud, #true) | fresh
+      set_ctxt('art_program: $v ; ...', get_ctxt(ap))
   // append the rewriters `rs` to one variant clause `name: prog`
   fun inject_into_variant(cl, rs):
     match cl

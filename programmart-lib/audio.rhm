@@ -31,7 +31,7 @@ import:
     lib("racket/base.rkt") as mrkt
 
 export:
-  program_performer
+  program_performer nav_audios
 
 meta:
   // read nested: tones live inside `music` embeddings (see facade's
@@ -54,8 +54,10 @@ meta:
   fun image_path(e):
     match e | 'image $p': to_string(p.unwrap()) | ~else: ""
 
-define_realizer program_performer:
-  fun (ctxt):
+meta:
+  // the performer timeline for a context, as `PairList(...)` syntax -- factored
+  // out of the realizer so `nav_audios` can build one per face in a single pass
+  fun performer_timeline(ctxt):
     def sr = 44100.0
     // seconds per interval unit: one unit is a quarter, ~120 bpm
     def spu = 0.5
@@ -170,3 +172,34 @@ define_realizer program_performer:
       acc ++ [mark] ++ body_evs
     let [ev, ...] = events
     'PairList($ev, ...)'
+
+  // a face's coordinates as a readable selector string (matches scribble.rhm's
+  // nav_views keys, so a view and its audio pair up by selector)
+  fun nav_coord_text(c):
+    def parts = args_of(c).map(fun (a): to_string(a.unwrap()))
+    to_string(head_of(c)) +& (if parts.length() > 0 | " " +& join(parts, " ") | "")
+  fun nav_selector(e):
+    def cs = get_ctxt(e).filter(~keep: fun (c): to_string(head_of(c)) != "art_id")
+    join(cs.map(nav_coord_text), ", ")
+
+define_realizer program_performer:
+  fun (ctxt): performer_timeline(ctxt)
+
+// nav_audios: for EVERY art_program in scope, realize its performance timeline
+// in ONE pass, keyed by its coordinate selector.  Reduce the composition's
+// recipe-applied AUDIO program (generative objects sampled to notes) to reach
+// this context; each face's html is converted to tones and performed here, so
+// the preview gets all face audio from a single realize -- O(faces), not the
+// O(faces^2) of reducing the whole scene per face.  Returns a list of
+// PairList(SELECTOR, TIMELINE); a timeline's music is a thunk, so it stays lazy.
+define_realizer nav_audios:
+  fun (ctxt):
+    def aps = context_ref_all(ctxt, #'art_program)
+    def rows = for List (ap in aps):
+      def sub = program_pick(ap, #'html)
+      def facectxt = rewrite(sub ++ ['rewrite_nested: note_to_tone'])
+      def sel = Syntax.make(nav_selector(ap), head_id_of(ap))
+      def tl = performer_timeline(facectxt)
+      'PairList($sel, $tl)'
+    let [r, ...] = rows
+    'PairList($r, ...)'

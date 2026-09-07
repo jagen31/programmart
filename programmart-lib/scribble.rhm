@@ -36,7 +36,7 @@ import:
 export:
   program_scribbler
   render_scribble_html
-  programs_to_images stash_face_audio
+  programs_to_images nav_views
   meta: program_scribble_source render_program_png
 
 meta:
@@ -116,6 +116,13 @@ meta:
       def c = to_string(ch)
       out.value := out.value +& (cond | c == "\\": "\\\\" | c == "\"": "\\\"" | ~else: c)
     out.value
+  // is a rendered body only whitespace? (used to drop empty / bg-only sections)
+  fun is_blank(s):
+    for values(blank = #true) (ch in to_string(s)):
+      def c = to_string(ch)
+      if c == " " || c == "\n" || c == "\t" || c == "\r"
+      | blank
+      | #false
 
   // a `#lang scribble/base` preamble:
   //   @bgsection[color]{title}{body} -- a titled block whose HTML carries
@@ -128,8 +135,8 @@ meta:
       +& "@(define (styled s . body) (nested #:style (style #f (list (attributes (list (cons 'style s))))) body))\n"
       +& "@(define sectitle-style (make-style #f (list (list 'tonart-colored-title 1))))\n"
       +& "@(define (bgsection color title . body)\n"
-      +& "   (styled (string-append \"background-color:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\")\n"
-      +& "     (paragraph sectitle-style (bold (larger title))) body))\n"
+      +& "   (apply styled (string-append \"background-color:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\")\n"
+      +& "     (if title (cons (paragraph sectitle-style (bold (larger title))) body) body)))\n"
       +& "@(define (slideframe title . body)\n"
       +& "   (styled (string-append \"border:1px solid #888;border-radius:8px;background:#fff;\"\n"
       +& "                          \"box-shadow:0 3px 12px rgba(0,0,0,.18);width:640px;min-height:360px;\"\n"
@@ -196,7 +203,9 @@ meta:
       if ix.length() > 0 | ix | [big]
     def blocks:
       for values(acc = "") (secs in all_secs):
-        def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
+        // no `art_title` -> no title rendered at all (no coordinate-name
+        // fallback); the `@bgsection` below is handed `#f` and omits the heading
+        def label = first_string_in(ctxt, #'art_title, secs)
         def color = first_string_in(ctxt, #'bg, secs) || "transparent"
         def imgs = images_in(ctxt, secs)
         // the section's score image (its already-engraved notes), keyed by its
@@ -228,8 +237,16 @@ meta:
                                    | index_less(b[0], a[0]): #false
                                    | ~else: a[1] < b[1])
         def body = for values(a = "") (t in sorted): a +& t[2]
-        acc +& "@bgsection[\"" +& color +& "\" \"" +& slit(label) +& "\"]{\n"
-          +& body +& "}\n\n"
+        // a section with no body -- no score, scripts, slides, text or rules --
+        // is not rendered at all, even if it carries a `bg` (a colour overlaid
+        // on a section absent from THIS program must not draw an empty tinted
+        // block) or a title.
+        cond
+        | is_blank(body): acc
+        | ~else:
+            def title_arg = if label | "\"" +& slit(label) +& "\"" | "#f"
+            acc +& "@bgsection[\"" +& color +& "\" " +& title_arg +& "]{\n"
+              +& body +& "}\n\n"
     "#lang scribble/base\n\n" +& scribble_preamble()
       +& (if title | "@title{" +& esc(title) +& "}\n\n" | "")
       +& blocks
@@ -318,21 +335,6 @@ meta:
             set_ctxt('$nm: $f ; ...', get_ctxt(cl))
       | ~else: cl
 
-  // like flatten_variants, but append the rewriters `rs` to each variant body
-  // before flattening -- so a caller (stash_face_audio) can bake an AUDIO recipe
-  // (plot_to_notes, hymn / resource resolution, ...) into the concrete result,
-  // producing NOTES where the visual flatten leaves a curve / lead-sheet image.
-  // `function_plot` etc. must still be raw here (run before the visual rewriters
-  // consume them).
-  fun flatten_variants_with(variants, rs):
-    for List (cl in variants):
-      match cl
-      | '$(nm :: Identifier): $item; ...':
-          block:
-            let [f, ...] = rewrite([item, ...] ++ rs)
-            set_ctxt('$nm: $f ; ...', get_ctxt(cl))
-      | ~else: cl
-
 define_mapping_rewriter programs_to_images over art_program:
   fun (stx, ap):
     def sub = program_pick(ap, #'html)          // the printable variant
@@ -346,22 +348,52 @@ define_mapping_rewriter programs_to_images over art_program:
          // on the image, so a viewer (the gestalt preview) can recover and
          // *perform* this face's program later -- see gestalt's `perform_face`
          def img = set_ctxt('image $path', remove_from_ctxt(get_ctxt(ap), #'art_id))
-         def img2 = img.group_property(#'program_source, flatten_variants(program_variants(ap)), #true)
-         // carry any per-face AUDIO source (from stash_face_audio) onto the image
-         // too, so the preview performs this face -- generative notes and all --
-         // rather than the visual flatten (where plot_to_curve ate the notes)
-         def aud = ap.group_property(#'program_audio_source)
-         [if aud | img2.group_property(#'program_audio_source, aud, #true) | img2])
+         [img.group_property(#'program_source, flatten_variants(program_variants(ap)), #true)])
     | []
 
-// stash_face_audio: <audio rewriters> -- for every art_program in scope, flatten
-// its variants with the AUDIO recipe appended (plot_to_notes, hymn / resource
-// resolution, ...) and stash the concrete result as `program_audio_source`.  The
-// mirror of `rewrite_in_program`, but it stashes an audio rendering instead of
-// injecting a visual one.  Run it BEFORE the visual rewriters (while a
-// `function_plot` / `toccata_figure` is still raw); the stash rides through
-// rewrite_in_program (rebuild_art_program keeps it) onto the image.
-define_mapping_rewriter stash_face_audio over art_program:
-  fun (stx, ap):
-    def rs = body_of(stx)
-    [ap.group_property(#'program_audio_source, flatten_variants_with(program_variants(ap), rs), #true)]
+// ---------------------------------------------------------------------
+// nav_views: render EVERY face in scope to its scribble document, in ONE pass,
+// keyed by its coordinate selector.  The scene is spliced once (to reach this
+// context) and each face rendered from it -- O(faces), NOT the O(faces^2) of
+// reducing the whole scene to one face at a time.  A face is either a raw
+// `art_program` or an `image` that programs_to_images drew (its html stashed as
+// `program_source`), so this reads whichever `program_visual` has.  Returns a
+// readable `((SELECTOR DOC) ...)`.
+// ---------------------------------------------------------------------
+
+meta:
+  // a face's coordinates as a readable selector string
+  fun nav_coord_text(c):
+    def parts = args_of(c).map(fun (a): to_string(a.unwrap()))
+    to_string(head_of(c)) +& (if parts.length() > 0 | " " +& join(parts, " ") | "")
+  fun nav_selector(e):
+    def cs = get_ctxt(e).filter(~keep: fun (c): to_string(head_of(c)) != "art_id")
+    join(cs.map(nav_coord_text), ", ")
+  // a scheme-readable escaped string literal
+  fun nav_sval(s):
+    def out = Box("\"")
+    for (ch in to_string(s)):
+      def c = to_string(ch)
+      out.value := out.value +& (cond | c == "\\": "\\\\" | c == "\"": "\\\"" | ~else: c)
+    out.value +& "\""
+  // the `html` variant body of a face, whether it is a raw art_program (its
+  // `inner` variant clauses) or a drawn image (its stashed `program_source`
+  // clauses) -- the same clauses either way, so a face reads uniformly
+  fun face_html(e):
+    def variants = e.group_property(#'program_source) || (e.group_property(#'inner) || [])
+    for values(p = []) (c in variants):
+      if to_string(head_of(c)) == "html" | body_of(c) | p
+  // the faces in scope: raw art_programs and/or the images they were drawn to
+  fun faces_in(ctxt):
+    context_ref_all(ctxt, #'art_program) ++ context_ref_all(ctxt, #'image)
+
+define_realizer nav_views:
+  fun (ctxt):
+    def rows = for values(acc = []) (e in faces_in(ctxt)):
+      def html = face_html(e)
+      cond
+      | html.length() > 0:
+          def doc = program_scribble_source(rewrite(html), "gestalt-embeds")
+          acc ++ ["(" +& nav_sval(nav_selector(e)) +& " " +& nav_sval(doc) +& ")"]
+      | ~else: acc
+    "(" +& join(rows, "\n ") +& ")"
