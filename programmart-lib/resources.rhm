@@ -20,42 +20,15 @@
 import: programmart open
 
 export:
-  art_program pick_program
-  resource_row resource
-  resource_to_title resource_to_contents
+  resource_row resource program_rule
+  resource_to_title resource_to_contents drop_resource_rows
   meta:
-    program_variants program_pick resources_of row_name row_title
+    resources_of row_name row_title
     row_author row_contents lookup_row title_string
 
-// ---------------------------------------------------------------------
-// art_program: pick a sub-program by realizer
-// ---------------------------------------------------------------------
-
-// an embedding whose inner is its raw `name: prog` variant clauses
-// (stored, not rewritten -- the chosen one is rewritten when picked)
-define_embedding art_program:
-  fun (expr): body_of(expr)
-
-meta:
-  // merge `coords` into each form's own coordinates (section appends, an
-  // interval the form already carries is kept)
-  fun splice_under(coords, exprs):
-    exprs.map(fun (e): set_ctxt(e, merge_coordinates(coords, get_ctxt(e), current_ctxt())))
-  // the variant clauses stored inside an art_program
-  fun program_variants(ap): ap.group_property(#'inner) || []
-  // the program of the clause named `name` (its block body), or #false
-  fun program_pick(ap, name):
-    def cl = program_variants(ap).filter(~keep: fun (c): head_of(c) == name)
-    if cl.length() > 0 | body_of(cl[0]) | #false
-
-// pick_program name: replace each art_program in scope with its `name`
-// variant, carrying the art_program's coordinates onto the result
-define_mapping_rewriter pick_program over art_program:
-  fun (stx, ap):
-    def name = args_of(stx)[0].unwrap()
-    def chosen = program_pick(ap, name)
-    def coords = remove_from_ctxt(get_ctxt(ap), #'art_id)
-    if chosen | splice_under(coords, chosen) | []
+// `art_program` (+ pick_program / rewrite_in_program and their helpers
+// splice_under / program_variants / program_pick / rebuild_art_program) now
+// live in the programmart standard lib (private/lib.rhm), imported open above.
 
 // ---------------------------------------------------------------------
 // resources
@@ -67,6 +40,7 @@ define_embedding resource_row:
   fun (expr): rewrite(body_of(expr))
 
 define_object resource        // resource name  (a reference)
+define_object program_rule    // a thick rule under a resource's heading
 
 meta:
   fun resources_of(ctxt):
@@ -106,5 +80,16 @@ define_mapping_rewriter resource_to_contents over resource:
     if row
     | (block:
          def s = Syntax.make(title_string(row))
-         splice_under(coords, ['text $s'] ++ row_contents(row)))
+         // heading, a thick rule, then the embedded program's contents
+         splice_under(coords, ['text $s', 'program_rule'] ++ row_contents(row)))
     | []
+
+// drop_resource_rows: remove every `resource_row` from the context.  A row
+// holds its contents RAW so `resource_to_contents` can splice them in under a
+// referencing section; left in place, that raw content renders as an
+// unsectioned blob (e.g. a prelude's whole score) on every page that has the
+// rows in scope.  Run this AFTER resource_to_contents / resource_to_title
+// (which read the rows) to clear the leftovers.
+define_rewriter drop_resource_rows:
+  fun (stx):
+    context_ref_all(current_ctxt(), #'resource_row).map(delete_expr)

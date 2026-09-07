@@ -111,6 +111,41 @@
       (super on-size w h)
       (notify-resize))))
 
+;; is there anything to Enter in this program's source?  An embedded gestalt
+;; `scene:` (word-boundary, so `gestalt_scene:` doesn't count), an `art_program`
+;; (which may hold a scene), or `scenes_to_images` (a scene is being drawn --
+;; e.g. a face-entered wrapper).
+(define (program-enterable? text)
+  (and (string? text)
+       (or (regexp-match? #px"art_program" text)
+           (regexp-match? #px"scenes_to_images" text)
+           (regexp-match? #px"\\bscene:" text))))
+
+;; a wrapper module (source text) whose `gestalt_program` art is the buffer's
+;; canonical `program` reduced to its embedded gestalt scene: import the buffer
+;; by basename, reference `program`, and surface the scene with `enter_scene`.
+;;
+;; It reads `program`, NOT `program_visual`: the convention is that `program`
+;; holds the raw `scene` embeddings while `program_visual` renders them to
+;; images (scenes_to_images) for the document -- so entering must come from the
+;; unflattened `program`, or the scene's cubes are already gone.  Named
+;; `gestalt_program` so it does not collide with the buffer's own `program`.
+(define (synth-scene-text base)
+  (string-append
+   "#lang rhombus/and_meta\n"
+   "import:\n"
+   "  lib(\"gestalt/main.rhm\") open\n"
+   "  lib(\"programmart/main.rhm\") open\n"
+   "  " (format "~s" base) " open\n"
+   "export: gestalt_program\n"
+   "define_art gestalt_program:\n"
+   "  program\n"
+   ;; a scene may sit in an `art_program` html variant (raw until picked); pick
+   ;; it so the scene enters context, then surface it.  A top-level scene (no
+   ;; art_program) survives pick unchanged.
+   "  pick_program html\n"
+   "  enter_scene\n"))
+
 (define preview-panel%
   (class vertical-panel%
     ;; `get-source` returns (list path-or-#f text modified?) for the
@@ -219,6 +254,14 @@
       (new button% [label "Next ▸"] [parent bar2] [enabled #f]
            [callback (lambda (b e) (send-cmd 'next))]))
 
+    ;; Enter: open the program's embedded gestalt `scene` in the gestalt
+    ;; preview pane (the mirror of gestalt's `Enter ▸`).  Greyed out until a
+    ;; scribble render succeeds AND the source has something to enter -- an
+    ;; embedded gestalt `scene:` or an `art_program` (which may hold one).
+    (define enter-gestalt-button
+      (new button% [label "Enter ▸"] [parent bar2] [enabled #f]
+           [callback (lambda (b e) (enter-gestalt))]))
+
     ;; A slider, not −/+ buttons: macOS floors every button at ~84px, so
     ;; two cost 168px of pane width.  The range has to stay small,
     ;; though -- a slider's width scales with its number of steps (a
@@ -252,6 +295,32 @@
            [editor doc-text]
            [style '(auto-vscroll no-hscroll)]
            [notify-resize (lambda () (schedule-relayout))]))
+
+    ;; ---- gestalt mode: an embedded gestalt preview pane -----------------
+    ;; `Enter Gestalt` swaps the whole document view for the real gestalt
+    ;; preview pane, realizing the program's embedded `scene` (surfaced by
+    ;; gestalt's `enter_scene`); `Exit` swaps back.  The pane is created lazily
+    ;; on first Enter (dynamic-require breaks the require cycle -- gestalt's
+    ;; preview already requires this one).  It reads its source from
+    ;; `gp-current-source`, a freshly synthesized wrapper module.
+    (define gestalt-mode? #f)
+    (define gp-pane #f)
+    (define gp-current-source #f)   ; (list synth-path text modified?) or #f
+    (define gestalt-cleanup void)   ; deletes this Enter's temp files
+    (define gestalt-container
+      (new vertical-panel% [parent this] [stretchable-width #t] [stretchable-height #t]))
+    (define gestalt-exit-bar
+      (new horizontal-panel% [parent gestalt-container]
+           [stretchable-height #f] [alignment '(left center)] [spacing 2]))
+    (new button% [label "◂ Exit"] [parent gestalt-exit-bar]
+         [callback (lambda (b e) (exit-gestalt))])
+    (new message% [label "Gestalt preview — Exit to return to the program"]
+         [parent gestalt-exit-bar] [stretchable-width #t] [auto-resize #f] [min-width 60])
+    ;; the program view occupies the whole pane; gestalt mode swaps ALL of it
+    ;; out for the gestalt pane (change-children, so the rows give up their
+    ;; space entirely rather than just hiding)
+    (define scene-children (list bar bar2 bar3 canvas))
+    (send this change-children (lambda (_) scene-children))
 
     ;; Resizing fires a burst of on-size calls; only the last matters.
     (define relayout-timer
@@ -470,6 +539,58 @@
             (values tmp dir (lambda () (with-handlers ([(lambda (_) #t) void])
                                          (delete-file tmp))))])]))
 
+    ;; ---- Enter / Exit gestalt ----
+    ;; Enter: synthesize a wrapper module that imports the buffer and reduces
+    ;; its visual art to its embedded scene (`enter_scene`), point a lazily
+    ;; created gestalt preview pane at it, and swap the pane over to it.
+    (define/private (enter-gestalt)
+      (cond
+        [(not (synth-scene-source)) (status "Save this file to a directory first.")]
+        [else
+         (unless gp-pane
+           (define gp-class (dynamic-require 'gestalt-preview/preview-panel 'preview-panel%))
+           (set! gp-pane (new gp-class [parent gestalt-container]
+                              [get-source (lambda () gp-current-source)]
+                              [art-name "gestalt_program"])))
+         (set! gestalt-mode? #t)
+         (send this change-children (lambda (_) (list gestalt-container)))
+         (send gp-pane render-now)]))
+
+    ;; Exit: stop the gestalt pane, drop temp files, restore the program view
+    (define/private (exit-gestalt)
+      (when gp-pane (send gp-pane shutdown))
+      (set! gestalt-mode? #f)
+      (send this change-children (lambda (_) scene-children))
+      (gestalt-cleanup) (set! gestalt-cleanup void)
+      (set! gp-current-source #f))
+
+    ;; Write a wrapper module (importing the buffer) whose `gestalt_program`
+    ;; art is the buffer's visual art reduced to its embedded scene, and point
+    ;; `gp-current-source` at it.  Named `gestalt_program` (not `program`) so it
+    ;; does not collide with the buffer's own art; the gestalt pane is told to
+    ;; realize that name.  Returns #f when there is nothing to save.
+    (define/private (synth-scene-source)
+      (define-values (src dir cleanup-src) (materialize))
+      (cond
+        [(not src) #f]
+        [else
+         (define base (let-values ([(b n d?) (split-path src)]) (path->string n)))
+         (define ext (or (path-get-extension src) #".rhm"))
+         (define synth (make-temporary-file
+                        (string-append "gestscene~a" (bytes->string/utf-8 ext #\?)) #f dir))
+         (define text (synth-scene-text base))
+         (call-with-output-file synth #:exists 'truncate/replace (lambda (o) (display text o)))
+         (set! gp-current-source (list synth text #f))
+         (set! gestalt-cleanup
+               (lambda ()
+                 (cleanup-src)
+                 (with-handlers ([(lambda (_) #t) void]) (delete-file synth))
+                 (with-handlers ([(lambda (_) #t) void])
+                   (define-values (b n d?) (split-path synth))
+                   (define zo (build-path dir "compiled" (path-replace-extension n #".zo")))
+                   (when (file-exists? zo) (delete-file zo)))))
+         #t]))
+
     ;; Introspection, used by the frame and by tests.
     (define/public (render-outcome) outcome)
     (define/public (block-count) (if blocks (length blocks) 0))
@@ -498,6 +619,7 @@
          (set! in-flight? #t)
          (status (format "Realizing (~a)…" m))
          (set-buttons-enabled! #f)
+         (send enter-gestalt-button enable #f)
          (define started (current-inexact-milliseconds))
          (void
           (thread
@@ -518,6 +640,12 @@
                      (set! blocks (cddr result))
                      (set! outcome 'ok)
                      (relayout)
+                     ;; a scribble render means we know the visual art; enable
+                     ;; Enter only when the source has an enterable embedding
+                     (let ([s (get-source)])
+                       (send enter-gestalt-button enable
+                             (and (eq? mode 'scribble)
+                                  (program-enterable? (and s (cadr s))))))
                      (status (format "~a · ~a blocks · ~a s"
                                      realized-art (length blocks)
                                      (real->decimal-string elapsed 1)))]
@@ -577,6 +705,8 @@
       (set! generation (add1 generation))   ; discard anything still in flight
       (set! in-flight? #f)
       (kill-running)
+      (when gp-pane (with-handlers ([(lambda (_) #t) void]) (send gp-pane shutdown)))
+      (gestalt-cleanup) (set! gestalt-cleanup void)
       ;; Closing the frame has to stop playback, and has to give the
       ;; player long enough to shut chuck down -- otherwise chuck
       ;; outlives DrRacket still holding the audio device.

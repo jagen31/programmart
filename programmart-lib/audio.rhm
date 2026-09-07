@@ -34,10 +34,18 @@ export:
   program_performer
 
 meta:
+  // read nested: tones live inside `music` embeddings (see facade's
+  // context_ref_all_nested), so descend to find them, like the engraver
   fun tones_in(ctxt, secs):
-    context_ref_all(ctxt, #'tone).filter(~keep: fun (e): section_of(e, secs))
+    context_ref_all_nested(ctxt, #'tone).filter(~keep: fun (e): section_of(e, secs))
   fun scripts_in(ctxt, secs):
     context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
+  // the `music` embeddings in a section (each an ix__ item that may carry an
+  // `index`), so their tones can be played as their own event, in order
+  fun musics_in(ctxt, secs):
+    context_ref_all(ctxt, #'music).filter(~keep: fun (e): section_of(e, secs))
+  fun tones_of(m):
+    context_ref_all_nested([m], #'tone)
   // slide images in a section, in slide order (their `index`)
   fun images_in(ctxt, secs):
     context_ref_all(ctxt, #'image)
@@ -59,9 +67,9 @@ define_realizer program_performer:
     def events = for values(acc = []) (secs in sections_by_index(ctxt)):
       def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
       def mark = 'PairList("mark", $(str(label)))'
-      // the section's dialogue, in order
-      def script_evs = for values(sacc = []) (sc in scripts_in(ctxt, secs)):
-        for values(a = sacc) (it in (sc.group_property(#'inner) || [])):
+      // one script block -> its speak/direct events, in line order
+      fun script_events(sc):
+        for values(a = []) (it in (sc.group_property(#'inner) || [])):
           cond
           | head_of(it) == #'line:
               def sp = str(mrkt.#{string-upcase}(to_string(args_of(it)[0].unwrap())))
@@ -71,9 +79,8 @@ define_realizer program_performer:
               def tx = str(to_string(args_of(it)[0].unwrap()))
               a ++ ['PairList("direct", $tx)']
           | ~else: a
-      // the section's music: mix its tones with rs_render, as a thunk
-      def toneset = tones_in(ctxt, secs)
-      def music_evs:
+      // a set of tones -> one `music` event (mixed with rs_render, as a thunk)
+      fun music_event(toneset):
         if toneset.length() > 0
         | (block:
              fun lit(v): Syntax.make(v, head_id_of(toneset[0]))
@@ -99,6 +106,67 @@ define_realizer program_performer:
              let [p, ...] = paths
              ['PairList("slide", PairList($p, ...))'])
         | []
-      acc ++ [mark] ++ script_evs ++ slide_evs ++ music_evs
+      // Order a section's speak and music by their `index` coordinate, the way
+      // art3's `the-script` was one `ix--` of speak/output items -- so a fanfare
+      // written as ix__ item 1 plays right after the line that is item 0.  Each
+      // script block and each `music` embedding is a chunk tagged with its index
+      // (or #false); unindexed chunks keep their input order after the indexed
+      // ones, so a section without `ix__` behaves exactly as before.
+      def big = 1000000000
+      // an item's full `index` path (art3's nested ix-- gives [9 0 1]); the
+      // whole path matters, not just its head, since sibling items share a
+      // prefix.  Unindexed chunks get [big] so they sort after indexed ones.
+      fun idx_key(e):
+        def ix = expr_index(e)
+        if ix.length() > 0 | ix | [big]
+      fun lex_less(a, b):
+        def n = math.min(a.length(), b.length())
+        recur loop(i = 0):
+          cond
+          | i == n: a.length() < b.length()   // a prefix of b sorts first
+          | a[i] < b[i]: #true
+          | a[i] > b[i]: #false
+          | ~else: loop(i + 1)
+      def script_chunks = for List (sc in scripts_in(ctxt, secs)):
+        [idx_key(sc), script_events(sc)]
+      // Group the section's tones by the `index` of the `music` embedding they
+      // sit in (bare tones -- e.g. a hymn score from `hymn_number_to_score` --
+      // key as [big]).  Tones sharing an index MIX into one event (a dance's
+      // melody + accompaniment play together); distinct indices stay separate (a
+      // fanfare interleaved with the script by its ix__ position).  Groups are
+      // kept in FIRST-APPEARANCE order so unindexed music ([big]) stays in the
+      // order it was written -- a MutableMap's key order is arbitrary and shuffled
+      // the samples visually.
+      fun tone_id(t): to_string(art_id_of(t))
+      // per-embedding tone lists in appearance order, plus a trailing entry for
+      // bare tones
+      def raw_groups:
+        def per_embed = for List (m in musics_in(ctxt, secs)): [idx_key(m), tones_of(m)]
+        def embedded_ids:
+          for values(acc = []) (m in musics_in(ctxt, secs)):
+            acc ++ tones_of(m).map(tone_id)
+        fun is_embedded(t):
+          for values(f = #false) (id in embedded_ids): f || (id == tone_id(t))
+        def bare_tones = tones_in(ctxt, secs).filter(~keep: fun (t): !is_embedded(t))
+        if bare_tones.length() > 0 | per_embed ++ [[[big], bare_tones]] | per_embed
+      // merge same-index entries, preserving the order each key first appears
+      def merged:
+        for values(acc = []) (e in raw_groups):
+          def ks = to_string(e[0])
+          if acc.filter(~keep: fun (g): to_string(g[0]) == ks).length() > 0
+          | acc.map(fun (g): if to_string(g[0]) == ks | [g[0], g[1] ++ e[1]] | g)
+          | acc ++ [e]
+      def music_chunks = for List (g in merged): [g[0], music_event(g[1])]
+      def slide_chunks = if slide_evs.length() > 0 | [[[big], slide_evs]] | []
+      def all_chunks = script_chunks ++ slide_chunks ++ music_chunks
+      def tagged = for List (i in 0 .. all_chunks.length()):
+        [all_chunks[i][0], i, all_chunks[i][1]]
+      def sorted = tagged.sort(fun (a, b):
+                                 cond
+                                 | lex_less(a[0], b[0]): #true
+                                 | lex_less(b[0], a[0]): #false
+                                 | ~else: a[1] < b[1])
+      def body_evs = for values(a = []) (t in sorted): a ++ t[2]
+      acc ++ [mark] ++ body_evs
     let [ev, ...] = events
     'PairList($ev, ...)'

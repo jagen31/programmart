@@ -17,7 +17,7 @@ import: programmart open
 
 export:
   hymn_row
-  hymn_number_to_title hymn_number_to_score
+  hymn_number_to_title hymn_number_to_score drop_hymn_rows
   meta: hymn_rows_of hymn_num hymn_title hymn_contents lookup_hymn
 
 // a row of the hymnal: number, printed title, tune name, and the melody
@@ -54,3 +54,10 @@ define_mapping_rewriter hymn_number_to_score over hymn_number:
     if row
     | hymn_contents(row).map(fun (e): set_ctxt(e, merge_coordinates(coords, get_ctxt(e), current_ctxt())))
     | []
+
+// drop_hymn_rows: remove every `hymn_row` (its melody is raw, meant to be
+// pulled by `hymn_number_to_score`; left in place it renders unsectioned).
+// Run after hymn_number_to_score.
+define_rewriter drop_hymn_rows:
+  fun (stx):
+    context_ref_all(current_ctxt(), #'hymn_row).map(delete_expr)

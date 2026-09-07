@@ -17,13 +17,16 @@
 
 import:
   facade open
+  lib("racket/base.rkt") as rkt        // regexp for parsing a coord string
+  lib("racket/string.rkt") as rstr
 
 export:
   section
   art_title text hymn_number bg program_title piece
   program_html program_text
+  art_program pick_program rewrite_in_program
   meta:
-    expr_section section_of
+    expr_section section_of splice_under program_variants program_pick rebuild_art_program
     sections_in_order sections_by_index section_index index_less first_string_in sec_label program_name hymns_in join
 
 // ---------------------------------------------------------------------
@@ -163,3 +166,69 @@ define_realizer program_html:
       +& (if title | title | "") +& "</title></head>\n<body>\n"
       +& (if title | "  <h1>" +& title +& "</h1>\n" | "")
       +& sections +& "</body></html>\n"
+
+// ---------------------------------------------------------------------
+// art_program: one sub-program per realizer, picked by name
+// ---------------------------------------------------------------------
+
+// an embedding whose inner is its raw `name: prog` variant clauses
+// (stored, not rewritten -- the chosen one is rewritten when picked)
+define_embedding art_program:
+  fun (expr): body_of(expr)
+
+meta:
+  // merge `coords` into each form's own coordinates (section appends, an
+  // interval the form already carries is kept)
+  fun splice_under(coords, exprs):
+    exprs.map(fun (e): set_ctxt(e, merge_coordinates(coords, get_ctxt(e), current_ctxt())))
+  // the variant clauses stored inside an art_program
+  fun program_variants(ap): ap.group_property(#'inner) || []
+  // the program of the clause named `name` (its block body), or #false
+  fun program_pick(ap, name):
+    def cl = program_variants(ap).filter(~keep: fun (c): head_of(c) == name)
+    if cl.length() > 0 | body_of(cl[0]) | #false
+  // a fresh art_program holding `variants`, keeping the original's coordinates
+  // (and any per-face audio source stashed by stash_face_audio, so it survives
+  // rewrite_in_program's rebuild on the way to programs_to_images)
+  fun rebuild_art_program(ap, variants):
+    block:
+      let [v, ...] = variants
+      def fresh = set_ctxt('art_program: $v ; ...', get_ctxt(ap))
+      def aud = ap.group_property(#'program_audio_source)
+      if aud | fresh.group_property(#'program_audio_source, aud, #true) | fresh
+  // append the rewriters `rs` to one variant clause `name: prog`
+  fun inject_into_variant(cl, rs):
+    match cl
+    | '$(nm :: Identifier): $item; ...':
+        block:
+          let [it, ...] = [item, ...]
+          let [r, ...] = rs
+          set_ctxt('$nm: $it ; ... ; $r ; ...', get_ctxt(cl))
+    | ~else: cl
+
+// pick_program name: replace each art_program in scope with its `name`
+// variant, carrying the art_program's coordinates onto the result
+define_mapping_rewriter pick_program over art_program:
+  fun (stx, ap):
+    def name = args_of(stx)[0].unwrap()
+    def chosen = program_pick(ap, name)
+    def coords = remove_from_ctxt(get_ctxt(ap), #'art_id)
+    if chosen | splice_under(coords, chosen) | []
+
+// rewrite_in_program: <block of rewriters>  -- an art_program stores its
+// variants raw (they are rewritten only when a realizer picks one), so we
+// cannot run rewriters against notes that do not exist yet.  Instead, append
+// the rewriters to every variant's program, so they run when that variant is
+// realized.  Mirrors rewrite_in_seq / rewrite_in_music, deferred.
+define_mapping_rewriter rewrite_in_program over art_program:
+  fun (stx, ap):
+    def rs = body_of(stx)
+    [rebuild_art_program(ap, program_variants(ap).map(fun (cl): inject_into_variant(cl, rs)))]
+
+// The old process-shared "Enter registry" (register_enter / enter_thunk /
+// face_key / coord_key) lived here: it papered over the fact that entering a
+// face re-realized stashed source NAMES in a fresh module.  That is retired --
+// a face's program is now captured as self-contained source (gestalt's
+// coordinate-and-inner-aware nav_children) or reduced by coordinate in one
+// module (gestalt-preview's build-nav-wrapper / perform_face), so no name ever
+// crosses a module boundary and no registry is needed.

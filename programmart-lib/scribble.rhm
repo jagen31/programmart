@@ -36,13 +36,15 @@ import:
 export:
   program_scribbler
   render_scribble_html
-  programs_to_images
+  programs_to_images stash_face_audio
   meta: program_scribble_source render_program_png
 
 meta:
-  // section-relative selectors, by head symbol
+  // section-relative selectors, by head symbol.  These read *nested* -- a
+  // note held inside a `music` embedding counts, since that is how music is
+  // organized (see facade's context_ref_all_nested).
   fun notes_in(ctxt, secs):
-    (context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest))
+    (context_ref_all_nested(ctxt, #'note) ++ context_ref_all_nested(ctxt, #'music_rest))
       .filter(~keep: fun (e): section_of(e, secs))
   fun images_in(ctxt, secs):
     context_ref_all(ctxt, #'image).filter(~keep: fun (e): section_of(e, secs))
@@ -52,6 +54,10 @@ meta:
     if fs.length() > 0 | fs[0] | #false
   fun scripts_in(ctxt, secs):
     context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
+  // the `music` embeddings in a section (each an ix__ item that may carry an
+  // `index`), so a score can be placed at its own position among the scripts
+  fun musics_in(ctxt, secs):
+    context_ref_all(ctxt, #'music).filter(~keep: fun (e): section_of(e, secs))
   // a section's `text` lines (e.g. a resource / hymn title standing in for
   // its contents) -> one Scribble paragraph each
   fun text_in(ctxt, secs):
@@ -59,23 +65,36 @@ meta:
   fun text_paras(ctxt, secs):
     for values(acc = "") (t in text_in(ctxt, secs)):
       acc +& "@para{" +& esc(args_of(t)[0].unwrap()) +& "}\n"
+  // a thick horizontal rule under a resource heading (old programmart's look).
+  // The preview renderer draws a heavy line for an empty paragraph whose style
+  // NAME is "TonartRule" (see scribble-preview.rkt); the CSS attribute covers
+  // HTML output too.
+  fun rules_in(ctxt, secs):
+    def rs = context_ref_all(ctxt, #'program_rule).filter(~keep: fun (e): section_of(e, secs))
+    for values(acc = "") (r in rs):
+      acc +& "@para[#:style rule-style]{}\n"
   // a section's scripts -> Scribble paragraphs: each `line` as
   // "@bold{NAME.} text", each `stage_direction` italicised
+  // one script block -> its Scribble paragraphs
+  fun script_block_paras(sc):
+    for values(a = "") (it in (sc.group_property(#'inner) || [])):
+      cond
+      | head_of(it) == #'line:
+          a +& "@para{@bold{" +& esc(mrkt.#{string-upcase}(to_string(args_of(it)[0].unwrap())))
+            +& ".} " +& esc(args_of(it)[1].unwrap()) +& "}\n"
+      | head_of(it) == #'stage_direction:
+          a +& "@para{@italic{" +& esc(args_of(it)[0].unwrap()) +& "}}\n"
+      | ~else: a
   fun script_paras(ctxt, secs):
     for values(acc = "") (sc in scripts_in(ctxt, secs)):
-      for values(a = acc) (it in (sc.group_property(#'inner) || [])):
-        cond
-        | head_of(it) == #'line:
-            a +& "@para{@bold{" +& esc(mrkt.#{string-upcase}(to_string(args_of(it)[0].unwrap())))
-              +& ".} " +& esc(args_of(it)[1].unwrap()) +& "}\n"
-        | head_of(it) == #'stage_direction:
-            a +& "@para{@italic{" +& esc(args_of(it)[0].unwrap()) +& "}}\n"
-        | ~else: a
+      acc +& script_block_paras(sc)
   fun slides_in(ctxt, secs):
     context_ref_all(ctxt, #'slide)
       .filter(~keep: fun (e): section_of(e, secs))
       .sort(fun (a, b): index_less(expr_index(a), expr_index(b)))
-  fun sec_id(secs): join(secs.map(fun (s): to_string(s)), "-")
+  fun sec_id(secs):
+    def s = join(secs.map(fun (s): to_string(s)), "-")
+    if s == "" | "score" | s      // the no-section group needs a real file name
   // absolute path for an image reference, so the emitted Scribble document
   // resolves it no matter what directory `raco scribble` is run from (the
   // files are written relative to *this* realize's cwd, which need not be
@@ -105,10 +124,12 @@ meta:
   //     pict-framed slide layout, in HTML)
   fun scribble_preamble():
     "@(require scribble/core scribble/html-properties scribble/base)\n"
+      +& "@(define rule-style (make-style \"TonartRule\" (list (attributes (list (cons 'style \"border-top:3px solid #000;margin:.4em 0;\"))))))\n"
       +& "@(define (styled s . body) (nested #:style (style #f (list (attributes (list (cons 'style s))))) body))\n"
+      +& "@(define sectitle-style (make-style #f (list (list 'tonart-colored-title 1))))\n"
       +& "@(define (bgsection color title . body)\n"
       +& "   (styled (string-append \"background-color:\" color \";padding:.5em 1em;margin:.6em 0;border-radius:6px;\")\n"
-      +& "     (bold (larger title)) (linebreak) body))\n"
+      +& "     (paragraph sectitle-style (bold (larger title))) body))\n"
       +& "@(define (slideframe title . body)\n"
       +& "   (styled (string-append \"border:1px solid #888;border-radius:8px;background:#fff;\"\n"
       +& "                          \"box-shadow:0 3px 12px rgba(0,0,0,.18);width:640px;min-height:360px;\"\n"
@@ -128,7 +149,7 @@ meta:
     def codes:
       for values(c = "") (e in content):
         if head_of(e) == #'code_line | c +& esc(args_of(e)[0].unwrap()) +& "\n" | c
-    def notes = content.filter(~keep: fun (e): head_of(e) == #'note || head_of(e) == #'music_rest)
+    def notes = context_ref_all_nested(content, #'note) ++ context_ref_all_nested(content, #'music_rest)
     def music:
       if notes.length() > 0
       | (block:
@@ -148,7 +169,12 @@ meta:
   fun program_scribble_source(ctxt, dir):
     mfile.#{make-directory*}(dir)
     def title = program_name(ctxt)
-    def all_secs = sections_by_index(ctxt)
+    // the sections in program order, plus the "no section" group ([]) when
+    // there is section-less music (e.g. a bare `music:` embedded on a shape's
+    // face) -- so a program need not declare a section just to show a score
+    def all_secs:
+      def secs = sections_by_index(ctxt)
+      if notes_in(ctxt, []).length() > 0 | [[]] ++ secs | secs
     // engrave every section's score up front, in ONE parallel batch (each
     // lilypond run is independent), then look the PNGs up while building the
     // document -- much faster than one lilypond process per section
@@ -162,26 +188,48 @@ meta:
     // pngs are in note_secs order; walk sections and pull the next one for
     // each that has a score
     def png_i = Box(0)
+    def big = 1000000000
+    // an item's full `index` path (from ix__), or [big] when unindexed so it
+    // sorts after indexed items (index_less puts [] first, not last)
+    fun idx_key(e):
+      def ix = expr_index(e)
+      if ix.length() > 0 | ix | [big]
     def blocks:
       for values(acc = "") (secs in all_secs):
         def label = first_string_in(ctxt, #'art_title, secs) || sec_label(secs)
         def color = first_string_in(ctxt, #'bg, secs) || "transparent"
         def imgs = images_in(ctxt, secs)
-        // a section with notes: its (already engraved) score.  a section
-        // without: its images stand alone (e.g. slide pictures), each on its
-        // own line.
-        def body:
+        // the section's score image (its already-engraved notes), keyed by its
+        // `music` embedding's index so it can sit between script blocks the way
+        // art3's `the-script` interleaved (output (! opening)) after a speak
+        def score_piece:
           if notes_in(ctxt, secs).length() > 0
           | (block:
                def p = pngs[png_i.value]
                png_i.value := png_i.value + 1
-               "@image[\"" +& abspath(p) +& "\"]{score}\n")
-          | (for values(a = "") (im in imgs):
-               a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n")
-        // the spoken script leads the section, then any `text` lines
-        // (resource / hymn titles), then its score/slides
+               def ms = musics_in(ctxt, secs)
+               def k = if ms.length() > 0 | idx_key(ms[0]) | [big]
+               [[k, "@image[\"" +& abspath(p) +& "\"]{score}\n"]])
+          | (block:
+               def slides = for values(a = "") (im in imgs):
+                 a +& "@image[\"" +& abspath(expr_image(im)) +& "\"]{slide}\n@linebreak[]\n"
+               if slides == "" | [] | [[[big], slides]])
+        // one piece per script block (so the score can fall between them),
+        // then text lines and rules; interleave all by index, unindexed last
+        def script_pieces = for List (sc in scripts_in(ctxt, secs)):
+          [idx_key(sc), script_block_paras(sc)]
+        def tail_pieces = [[[big], text_paras(ctxt, secs) +& rules_in(ctxt, secs)]]
+        def all_pieces = script_pieces ++ tail_pieces ++ score_piece
+        def tagged = for List (i in 0 .. all_pieces.length()):
+          [all_pieces[i][0], i, all_pieces[i][1]]
+        def sorted = tagged.sort(fun (a, b):
+                                   cond
+                                   | index_less(a[0], b[0]): #true
+                                   | index_less(b[0], a[0]): #false
+                                   | ~else: a[1] < b[1])
+        def body = for values(a = "") (t in sorted): a +& t[2]
         acc +& "@bgsection[\"" +& color +& "\" \"" +& slit(label) +& "\"]{\n"
-          +& script_paras(ctxt, secs) +& text_paras(ctxt, secs) +& body +& "}\n\n"
+          +& body +& "}\n\n"
     "#lang scribble/base\n\n" +& scribble_preamble()
       +& (if title | "@title{" +& esc(title) +& "}\n\n" | "")
       +& blocks
@@ -222,21 +270,68 @@ meta:
   // a `#lang scribble/base` module just provides `doc`), turn it into the
   // display list `scribble-preview` builds, and paint that into a bitmap
   // with `dl-draw` (gui-free racket/draw).  Sized exactly to the program.
-  fun render_program_png(source, dir, name):
+  // a content hash of `s`, so the same source names the same file -- the basis
+  // of the render cache (drilling into nested programs must not repaint the
+  // same unchanged program every time)
+  fun content_hash(s):
+    to_string(s.length()) +& "x" +& to_string(mrkt.#{abs}(mrkt.#{equal-hash-code}(s)))
+  fun render_program_png(source, dir, prefix):
     mfile.#{make-directory*}(dir)
-    def scrbl = dir +& "/" +& name +& ".scrbl"
-    def f = mrkt.#{open-output-file}(scrbl, ~exists: #'replace)
-    mrkt.#{write-string}(source, f)
-    mrkt.#{close-output-port}(f)
-    def doc = mrkt.#{dynamic-require}(mrkt.#{string->path}(scrbl), #'doc, fun (): #false)
+    def name = prefix +& "-" +& content_hash(source)
     def png = mrkt.#{path->string}(mrkt.#{path->complete-path}(dir +& "/" +& name +& ".png"))
-    if doc
-    | mdraw.#{display-list->png}(mprev.#{doc->display-list}(doc), png)
-    | png
-  // a stable file name from the art_program's own coordinates
+    cond
+    | mrkt.#{file-exists?}(png): png            // cached: this exact source is drawn
+    | ~else:
+        // ABSOLUTE path: `open-output-file` writes relative to `current-directory`
+        // but `dynamic-require` resolves a relative path against
+        // `current-load-relative-directory` -- the preview sets those to different
+        // dirs, so a relative scrbl is written one place and looked for in another
+        // ("cannot find file ...scrbl").  A complete path is unambiguous for both.
+        def scrbl = mrkt.#{path->complete-path}(dir +& "/" +& name +& ".scrbl")
+        def f = mrkt.#{open-output-file}(scrbl, ~exists: #'replace)
+        mrkt.#{write-string}(source, f)
+        mrkt.#{close-output-port}(f)
+        def doc = mrkt.#{dynamic-require}(scrbl, #'doc, fun (): #false)
+        if doc
+        | mdraw.#{display-list->png}(mprev.#{doc->display-list}(doc), png)
+        | png
+  // a stable prefix from the art_program's own coordinates (the content hash
+  // is appended by render_program_png)
   fun program_tag(ap):
     def nm = join(expr_names(ap).map(fun (n): to_string(n)), "-")
-    "embed-" +& (if nm == "" | "prog" | nm) +& "-" +& Symbol.gen()
+    "embed-" +& (if nm == "" | "prog" | nm)
+
+  // Make a stashed program SELF-CONTAINED by running the real engine over each
+  // variant body.  A face whose body is a section name (`art_program: html:
+  // demo_intro`) otherwise stashes just that name (and any art-var nested under
+  // it, e.g. a `fanfare` under `music`); the preview's Enter path then rebuilds
+  // a fresh module and re-realizes those names, where the section arts may not
+  // be in scope ("unknown art form: ..."").  `rewrite` splices art-vars AND
+  // re-compiles embeddings here (we are in an expansion context), leaving a
+  // concrete program of notes/scripts that needs no name resolution downstream.
+  fun flatten_variants(variants):
+    for List (cl in variants):
+      match cl
+      | '$(nm :: Identifier): $item; ...':
+          block:
+            let [f, ...] = rewrite([item, ...])
+            set_ctxt('$nm: $f ; ...', get_ctxt(cl))
+      | ~else: cl
+
+  // like flatten_variants, but append the rewriters `rs` to each variant body
+  // before flattening -- so a caller (stash_face_audio) can bake an AUDIO recipe
+  // (plot_to_notes, hymn / resource resolution, ...) into the concrete result,
+  // producing NOTES where the visual flatten leaves a curve / lead-sheet image.
+  // `function_plot` etc. must still be raw here (run before the visual rewriters
+  // consume them).
+  fun flatten_variants_with(variants, rs):
+    for List (cl in variants):
+      match cl
+      | '$(nm :: Identifier): $item; ...':
+          block:
+            let [f, ...] = rewrite([item, ...] ++ rs)
+            set_ctxt('$nm: $f ; ...', get_ctxt(cl))
+      | ~else: cl
 
 define_mapping_rewriter programs_to_images over art_program:
   fun (stx, ap):
@@ -247,5 +342,26 @@ define_mapping_rewriter programs_to_images over art_program:
          def png = render_program_png(program_scribble_source(sctxt, "gestalt-embeds"),
                                       "gestalt-embeds", program_tag(ap))
          def path = Syntax.make(png)
-         [set_ctxt('image $path', remove_from_ctxt(get_ctxt(ap), #'art_id))])
+         // stash the program's variants (art-vars expanded to concrete forms)
+         // on the image, so a viewer (the gestalt preview) can recover and
+         // *perform* this face's program later -- see gestalt's `perform_face`
+         def img = set_ctxt('image $path', remove_from_ctxt(get_ctxt(ap), #'art_id))
+         def img2 = img.group_property(#'program_source, flatten_variants(program_variants(ap)), #true)
+         // carry any per-face AUDIO source (from stash_face_audio) onto the image
+         // too, so the preview performs this face -- generative notes and all --
+         // rather than the visual flatten (where plot_to_curve ate the notes)
+         def aud = ap.group_property(#'program_audio_source)
+         [if aud | img2.group_property(#'program_audio_source, aud, #true) | img2])
     | []
+
+// stash_face_audio: <audio rewriters> -- for every art_program in scope, flatten
+// its variants with the AUDIO recipe appended (plot_to_notes, hymn / resource
+// resolution, ...) and stash the concrete result as `program_audio_source`.  The
+// mirror of `rewrite_in_program`, but it stashes an audio rendering instead of
+// injecting a visual one.  Run it BEFORE the visual rewriters (while a
+// `function_plot` / `toccata_figure` is still raw); the stash rides through
+// rewrite_in_program (rebuild_art_program keeps it) onto the image.
+define_mapping_rewriter stash_face_audio over art_program:
+  fun (stx, ap):
+    def rs = body_of(stx)
+    [ap.group_property(#'program_audio_source, flatten_variants_with(program_variants(ap), rs), #true)]
