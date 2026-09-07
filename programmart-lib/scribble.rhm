@@ -36,7 +36,7 @@ import:
 export:
   program_scribbler
   render_scribble_html
-  programs_to_images nav_views
+  programs_to_images nav_views nav_scenes
   meta: program_scribble_source render_program_png
 
 meta:
@@ -396,4 +396,26 @@ define_realizer nav_views:
           def doc = program_scribble_source(rewrite(html), "gestalt-embeds")
           acc ++ ["(" +& nav_sval(nav_selector(e)) +& " " +& nav_sval(doc) +& ")"]
       | ~else: acc
+    "(" +& join(rows, "\n ") +& ")"
+
+// nav_scenes: the selectors of faces whose program EMBEDS a gestalt scene --
+// so the preview can recurse into it (enter_scene) and make it flyable/playable.
+// A face's program carries the scene either as a raw `scene` embedding or, once
+// `scenes_to_images` has run in the view recipe, as an `image` that stashed the
+// cubes on `scene_source`; enter_scene reads either, so we detect either here.
+// Returns a readable `(SELECTOR ...)`.
+define_realizer nav_scenes:
+  fun (ctxt):
+    def rows = for values(acc = []) (e in faces_in(ctxt)):
+      def html = face_html(e)
+      cond
+      | html.length() == 0: acc
+      | ~else:
+          def rc = rewrite(html)
+          def raw = context_ref_all(rc, #'scene)
+          def imaged = context_ref_all(rc, #'image)
+                         .filter(~keep: fun (im): im.group_property(#'scene_source))
+          if raw.length() > 0 || imaged.length() > 0
+          | acc ++ [nav_sval(nav_selector(e))]
+          | acc
     "(" +& join(rows, "\n ") +& ")"
