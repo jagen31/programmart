@@ -36,7 +36,7 @@ import:
 export:
   program_scribbler
   render_scribble_html
-  programs_to_images nav_views nav_scenes
+  programs_to_images draw_programs nav_views nav_scenes
   meta: program_scribble_source render_program_png
 
 meta:
@@ -334,9 +334,10 @@ meta:
             let [f, ...] = rewrite([item, ...])
             set_ctxt('$nm: $f ; ...', get_ctxt(cl))
       | ~else: cl
-
-define_mapping_rewriter programs_to_images over art_program:
-  fun (stx, ap):
+  // draw an `art_program`'s printable (html) variant to a PNG and return the
+  // `image` expr carrying the face's coordinates, or #false if it has no html
+  // variant.  Shared by `programs_to_images` and `draw_programs`.
+  fun face_image(ap):
     def sub = program_pick(ap, #'html)          // the printable variant
     if sub
     | (block:
@@ -344,12 +345,29 @@ define_mapping_rewriter programs_to_images over art_program:
          def png = render_program_png(program_scribble_source(sctxt, "gestalt-embeds"),
                                       "gestalt-embeds", program_tag(ap))
          def path = Syntax.make(png)
-         // stash the program's variants (art-vars expanded to concrete forms)
-         // on the image, so a viewer (the gestalt preview) can recover and
-         // *perform* this face's program later -- see gestalt's `perform_face`
-         def img = set_ctxt('image $path', remove_from_ctxt(get_ctxt(ap), #'art_id))
-         [img.group_property(#'program_source, flatten_variants(program_variants(ap)), #true)])
+         set_ctxt('image $path', remove_from_ctxt(get_ctxt(ap), #'art_id)))
+    | #false
+
+define_mapping_rewriter programs_to_images over art_program:
+  fun (stx, ap):
+    def img = face_image(ap)
+    if img
+    // stash the program's variants (art-vars expanded to concrete forms) on the
+    // image, so a viewer (the gestalt preview) can recover and *perform* this
+    // face's program later -- see gestalt's `perform_face`
+    | [img.group_property(#'program_source, flatten_variants(program_variants(ap)), #true)]
     | []
+
+// `draw_programs`: like `programs_to_images` but draws the face image ONLY,
+// WITHOUT stashing (and `flatten_variants`-rewriting) each face's program_source
+// -- a per-face `rewrite` that is the bulk of the cost.  For a consumer that
+// only needs the picture and never recovers a face's program (e.g. the gestalt
+// scene overview, which draws to SVG and discards program_source), this skips
+// that work entirely.
+define_mapping_rewriter draw_programs over art_program:
+  fun (stx, ap):
+    def img = face_image(ap)
+    if img | [img] | []
 
 // ---------------------------------------------------------------------
 // nav_views: render EVERY face in scope to its scribble document, in ONE pass,
