@@ -92,4 +92,4 @@ define_mapping_rewriter resource_to_contents over resource:
 // (which read the rows) to clear the leftovers.
 define_rewriter drop_resource_rows:
   fun (stx):
-    context_ref_all(current_ctxt(), #'resource_row).map(delete_expr)
+    [delete_exprs(context_ref_all(current_ctxt(), #'resource_row))]

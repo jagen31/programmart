@@ -60,4 +60,4 @@ define_mapping_rewriter hymn_number_to_score over hymn_number:
 // Run after hymn_number_to_score.
 define_rewriter drop_hymn_rows:
   fun (stx):
-    context_ref_all(current_ctxt(), #'hymn_row).map(delete_expr)
+    [delete_exprs(context_ref_all(current_ctxt(), #'hymn_row))]
