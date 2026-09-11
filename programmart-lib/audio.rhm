@@ -32,6 +32,7 @@ import:
 
 export:
   program_performer nav_audios
+  program_chuck nav_audios_chuck
 
 meta:
   // read nested: tones live inside `music` embeddings (see facade's
@@ -55,9 +56,46 @@ meta:
     match e | 'image $p': to_string(p.unwrap()) | ~else: ""
 
 meta:
+  // ChucK source for a set of tones.  Each tone becomes a `spork`ed shred that
+  // waits until its onset, opens a SawOsc into `dac` for its duration, then
+  // closes it -- so overlapping tones are natural polyphony.  The main shred
+  // sleeps to the last tone's end (plus a short tail) so every child finishes.
+  // Generating this string is instant; unlike the rsound path, no audio is
+  // synthesized at realize/cache time -- ChucK makes the sound at play time.
+  def chuck_header:
+    "fun void _tone(float f, float g, dur on, dur len) {\n"
+      +& "  on => now;\n"
+      +& "  SawOsc o => dac;\n"
+      +& "  f => o.freq;\n"
+      +& "  g => o.gain;\n"
+      +& "  len => now;\n"
+      +& "  0.0 => o.gain;\n"
+      +& "  o =< dac;\n"
+      +& "}\n"
+  fun chuck_music_source(toneset, ctxt, spu):
+    def lines:
+      for List (t in toneset):
+        def start = expr_start(t)
+        def end = expr_end(t)
+        def vs = context_ref_surrounding(ctxt, get_ctxt(t), #'volume)
+        def vol = if vs.length() > 0 | args_of(vs[0])[0].unwrap() | 1
+        def freq = args_of(t)[0].unwrap()
+        def g = vol * 0.1
+        def s = (start * spu) * 1.0
+        def d = ((end - start) * spu) * 1.0
+        "spork ~ _tone(" +& to_string(freq * 1.0) +& ", " +& to_string(g * 1.0)
+          +& ", " +& to_string(s) +& "::second, " +& to_string(d) +& "::second);"
+    def maxend = for values(m = 0) (t in toneset):
+      def e = expr_end(t)
+      if e && e > m | e | m
+    chuck_header +& join(lines, "\n") +& "\n"
+      +& to_string((maxend * spu + 0.3) * 1.0) +& "::second => now;\n"
+
   // the performer timeline for a context, as `PairList(...)` syntax -- factored
-  // out of the realizer so `nav_audios` can build one per face in a single pass
-  fun performer_timeline(ctxt):
+  // out of the realizer so `nav_audios` can build one per face in a single pass.
+  // `~chuck`: emit each `music` event as a ChucK source string (played by the
+  // ChucK VM at play time) instead of an rsound thunk (synthesized to a WAV).
+  fun performer_timeline(ctxt, ~chuck = #false):
     def sr = 44100.0
     // seconds per interval unit: one unit is a quarter, ~120 bpm
     def spu = 0.5
@@ -81,23 +119,31 @@ meta:
               def tx = str(to_string(args_of(it)[0].unwrap()))
               a ++ ['PairList("direct", $tx)']
           | ~else: a
-      // a set of tones -> one `music` event (mixed with rs_render, as a thunk)
+      // a set of tones -> one `music` event.  On the rsound path it is an
+      // rs_render thunk (synthesized lazily); on the ChucK path it is a ChucK
+      // source string the player feeds to the `chuck` VM.
       fun music_event(toneset):
         if toneset.length() > 0
         | (block:
              fun lit(v): Syntax.make(v, head_id_of(toneset[0]))
-             fun frames(x): lit(mrkt.#{inexact->exact}(math.round(x)))
-             def specs = for List (t in toneset):
-               def start = expr_start(t)
-               def end = expr_end(t)
-               def vs = context_ref_surrounding(ctxt, get_ctxt(t), #'volume)
-               def vol = if vs.length() > 0 | args_of(vs[0])[0].unwrap() | 1
-               '[$(lit(args_of(t)[0].unwrap())), $(lit(vol * 0.05)), $(frames((end - start) * sr * spu)), $(frames(start * sr * spu))]'
              def maxend = for values(m = 0) (t in toneset):
                def e = expr_end(t)
                if e && e > m | e | m
-             let [sp, ...] = specs
-             ['PairList("music", fun (): rs_render([$sp, ...]), $(lit(maxend * spu)))'])
+             cond
+             | chuck:
+                 def src = chuck_music_source(toneset, ctxt, spu)
+                 ['PairList("music", $(str(src)), $(lit(maxend * spu)))']
+             | ~else:
+                 (block:
+                    fun frames(x): lit(mrkt.#{inexact->exact}(math.round(x)))
+                    def specs = for List (t in toneset):
+                      def start = expr_start(t)
+                      def end = expr_end(t)
+                      def vs = context_ref_surrounding(ctxt, get_ctxt(t), #'volume)
+                      def vol = if vs.length() > 0 | args_of(vs[0])[0].unwrap() | 1
+                      '[$(lit(args_of(t)[0].unwrap())), $(lit(vol * 0.05)), $(frames((end - start) * sr * spu)), $(frames(start * sr * spu))]'
+                    let [sp, ...] = specs
+                    ['PairList("music", fun (): rs_render([$sp, ...]), $(lit(maxend * spu)))']))
         | []
       // the section's slides (if any) -> one `slide` event with their paths
       def imgs = images_in(ctxt, secs)
@@ -185,6 +231,11 @@ meta:
 define_realizer program_performer:
   fun (ctxt): performer_timeline(ctxt)
 
+// like `program_performer`, but each `music` event is a ChucK source string
+// rather than an rsound thunk -- so nothing is synthesized at realize time
+define_realizer program_chuck:
+  fun (ctxt): performer_timeline(ctxt, ~chuck: #true)
+
 // nav_audios: for EVERY art_program in scope, realize its performance timeline
 // in ONE pass, keyed by its coordinate selector.  Reduce the composition's
 // recipe-applied AUDIO program (generative objects sampled to notes) to reach
@@ -200,6 +251,19 @@ define_realizer nav_audios:
       def facectxt = rewrite(sub ++ ['rewrite_nested: note_to_tone'])
       def sel = Syntax.make(nav_selector(ap), head_id_of(ap))
       def tl = performer_timeline(facectxt)
+      'PairList($sel, $tl)'
+    let [r, ...] = rows
+    'PairList($r, ...)'
+
+// like `nav_audios`, but every face's music is ChucK source (see `program_chuck`)
+define_realizer nav_audios_chuck:
+  fun (ctxt):
+    def aps = context_ref_all(ctxt, #'art_program)
+    def rows = for List (ap in aps):
+      def sub = program_pick(ap, #'html)
+      def facectxt = rewrite(sub ++ ['rewrite_nested: note_to_tone'])
+      def sel = Syntax.make(nav_selector(ap), head_id_of(ap))
+      def tl = performer_timeline(facectxt, ~chuck: #true)
       'PairList($sel, $tl)'
     let [r, ...] = rows
     'PairList($r, ...)'
