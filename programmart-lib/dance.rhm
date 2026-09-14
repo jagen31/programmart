@@ -1,0 +1,31 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// programmart/dance -- bridge danceart poses onto the concert program.
+//
+// The Scribble realizer (and `program_png_pict`) render `image` objects, never
+// `arm_diagram` directly.  `arm_diagrams_to_images` renders each `arm_diagram`
+// pose to a PNG (via danceart's `render_dancer`) and replaces it with an
+// `image` carrying the pose's coordinates -- so the dancer figures hang over
+// the staves in the engraved program, exactly as the old concert did.
+//
+//   import:
+//     lib("programmart/dance.rhm") open
+//   ... a program that contains `at [...]: arm_diagram L R` poses ...
+//   arm_diagrams_to_images     // run before realizing to Scribble / a pict
+// =====================================================================
+
+import:
+  danceart open                       // arm_diagram, facing, render_dancer (meta)
+  lib("tonart4/lilypond.rhm") open    // the `image` object the renderer reads
+
+export:
+  arm_diagrams_to_images
+
+define_mapping_rewriter arm_diagrams_to_images over arm_diagram:
+  fun (stx, ap):
+    def path = render_dancer(ap, "dance-figures")
+    if path
+    | [set_ctxt('image $(Syntax.make(path))',
+                remove_from_ctxt(get_ctxt(ap), #'art_id))]
+    | []
