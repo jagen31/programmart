@@ -27,6 +27,7 @@ import:
   lib("racket/system.rkt") as sys
   lib("racket/file.rkt") as rfile
   lib("racket/path.rkt") as rpath
+  pict as pf                               // Rhombus pict: values render in the REPL
   meta:
     lib("racket/file.rkt") as mfile
     lib("racket/base.rkt") as mrkt
@@ -35,9 +36,10 @@ import:
 
 export:
   program_scribbler
+  program_pict debug_pict program_png_pict png_pict
   render_scribble_html
   programs_to_images draw_programs nav_views nav_scenes
-  meta: program_scribble_source render_program_png
+  meta: program_scribble_source render_program_png tree_to_syntax
 
 meta:
   // section-relative selectors, by head symbol.  These read *nested* -- a
@@ -47,7 +49,10 @@ meta:
     (context_ref_all_nested(ctxt, #'note) ++ context_ref_all_nested(ctxt, #'music_rest))
       .filter(~keep: fun (e): section_of(e, secs))
   fun images_in(ctxt, secs):
-    context_ref_all(ctxt, #'image).filter(~keep: fun (e): section_of(e, secs))
+    // nested, like notes: an `image` held inside a `music` embedding (e.g. a
+    // dance converted by arm_diagram_to_image, laid out with the score) counts,
+    // carrying the embedding's coordinates down (see facade's context_ref_all_nested)
+    context_ref_all_nested(ctxt, #'image).filter(~keep: fun (e): section_of(e, secs))
   // the first form of type `name` in `secs`, or #false
   fun first_in(ctxt, name, secs):
     def fs = context_ref_all(ctxt, name).filter(~keep: fun (e): section_of(e, secs))
@@ -437,3 +442,112 @@ define_realizer nav_scenes:
           | acc ++ [nav_sval(nav_selector(e))]
           | acc
     "(" +& join(rows, "\n ") +& ")"
+
+// ---------------------------------------------------------------------
+// program_pict: a program -> a structural `pict`, for eyeballing in the
+// DrRacket REPL.  A DIRECT renderer -- no scribble / HTML / PNG, no lilypond:
+// it walks the program into a labeled-box tree (program -> sections ->
+// scripts / voices -> notes) and `debug_pict` draws that tree with plain pict
+// combinators.  Fast and dependency-light -- meant for inspecting structure,
+// not for engraving.  Try:  realize program_pict: my_program
+// ---------------------------------------------------------------------
+
+// runtime: a labeled-box TREE -> a pict.  A node is either a string (a leaf
+// line) or a list `[label, child, ...]` drawn as a framed box with the label
+// on top and its children indented below.  Shared by program_pict and
+// gestalt_pict (the one small piece both direct renderers build on).
+fun debug_pict(node):
+  cond
+  | node is_a String: pf.text(node)
+  | ~else:
+      def label = node[0]
+      def kids = for List (i in 1 .. node.length()): node[i]
+      def hd = pf.text(label)
+      def inner:
+        cond
+        | kids.length() == 0: hd
+        | ~else:
+            def body = pf.stack(~horiz: #'left, ~sep: 3, & kids.map(debug_pict))
+            pf.stack(~horiz: #'left, ~sep: 4, hd, body.pad(~left: 14))
+      pf.rectangle(~around: inner.pad(5), ~line: "black")
+
+meta:
+  // a string/list TREE -> literal syntax.  Unlike facade's `value_to_syntax`,
+  // the `[...]` here carries THIS module's context, so `#%brackets` (and the
+  // string `#%literal`s, via `ctx`) resolve where the result is spliced.
+  fun tree_to_syntax(node, ctx):
+    cond
+    | node is_a String: Syntax.make(node, ctx)
+    | ~else:
+        def [e, ...] = node.map(fun (x): tree_to_syntax(x, ctx))
+        '[$e, ...]'
+  // a note form -> "c#4 @0-2"
+  fun note_line(n):
+    def p = to_string(args_of(n)[0].unwrap())
+    def a = args_of(n)[1].unwrap()
+    def o = to_string(args_of(n)[2].unwrap())
+    def acc:
+      cond
+      | a == 0: ""
+      | a > 0: "#" +& (if a > 1 | to_string(a) | "")
+      | ~else: "b" +& (if a < -1 | to_string(-a) | "")
+    def s = expr_start(n) || 0
+    def e = expr_end(n)
+    p +& acc +& o +& " @" +& to_string(s) +& (if e | "-" +& to_string(e) | "")
+  fun voice_name_of(n):
+    def c = context_ref(get_ctxt(n), #'voice)
+    if c && args_of(c).length() > 0 | to_string(args_of(c)[0].unwrap()) | "voice"
+  // one section -> a structural node [label, script-node?, voice-node ...]
+  fun program_section_node(ctxt, secs):
+    def title = first_string_in(ctxt, #'art_title, secs)
+    def label = "section " +& sec_label(secs) +& (if title | " — " +& title | "")
+    def script_nodes:
+      for List (sc in scripts_in(ctxt, secs)):
+        def lines:
+          for values(acc = []) (it in (sc.group_property(#'inner) || [])):
+            cond
+            | head_of(it) == #'line:
+                acc ++ [to_string(args_of(it)[0].unwrap()) +& ": " +& to_string(args_of(it)[1].unwrap())]
+            | head_of(it) == #'stage_direction:
+                acc ++ ["(" +& to_string(args_of(it)[0].unwrap()) +& ")"]
+            | ~else: acc
+        ["script"] ++ lines
+    def notes = context_ref_all_nested(ctxt, #'note).filter(~keep: fun (n): section_of(n, secs))
+    def by_voice:
+      for values(acc = []) (n in notes):
+        def v = voice_name_of(n)
+        if acc.filter(~keep: fun (g): g[0] == v).length() > 0
+        | acc.map(fun (g): if g[0] == v | [g[0], g[1] ++ [n]] | g)
+        | acc ++ [[v, [n]]]
+    def voice_nodes:
+      for List (g in by_voice):
+        def sorted = g[1].sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
+        ["voice " +& g[0]] ++ sorted.map(note_line)
+    [label] ++ script_nodes ++ voice_nodes
+
+define_realizer program_pict:
+  fun (ctxt):
+    def title = program_name(ctxt)
+    def secs = sections_by_index(ctxt)
+    def tree = ["program" +& (if title | ": " +& title | "")]
+                 ++ (for List (s in secs): program_section_node(ctxt, s))
+    // value_to_syntax turns the string/list tree into a literal; borrow a
+    // form's context so its string literals resolve `#%literal` at the use site
+    def ctx0 = head_id_of(ctxt[0])
+    'debug_pict($(tree_to_syntax(tree, ctx0)))'
+
+// runtime: a PNG path -> a Rhombus Pict (so it renders in the REPL).  Shared
+// by program_png_pict and gestalt_png_pict.
+fun png_pict(path): pf.bitmap(path)
+
+// program_png_pict: the ACTUAL rendered program (engraved scores and all) as a
+// Pict -- the real scribble render, drawn to a PNG (reusing render_program_png
+// and its cache) and wrapped as a Pict for the REPL.  Heavier than program_pict
+// (runs lilypond) but shows the real thing.  Try:
+//   realize program_png_pict: my_program
+define_realizer program_png_pict:
+  fun (ctxt):
+    def png = render_program_png(program_scribble_source(ctxt, "repl-picts"),
+                                 "repl-picts", "repl")
+    def ctx0 = head_id_of(ctxt[0])
+    'png_pict($(Syntax.make(png, ctx0)))'
