@@ -18,14 +18,23 @@
 import:
   danceart open                       // arm_diagram, facing, render_dancer (meta)
   lib("tonart4/lilypond.rhm") open    // the `image` object the renderer reads
+  meta:
+    lib("racket/base.rkt") as mrkt
 
 export:
   arm_diagram_to_image
 
 define_mapping_rewriter arm_diagram_to_image over arm_diagram:
   fun (stx, ap):
-    def path = render_dancer(ap, "dance-figures")
-    if path
-    | [set_ctxt('image $(Syntax.make(path))',
-                remove_from_ctxt(get_ctxt(ap), #'art_id))]
+    // EPS, not PNG: the engraver embeds it with \epsfile, which keeps the
+    // figure's transparency and colours (lilypond silently drops transparent
+    // PNGs).  PNG is danceart's HTML format.
+    def rel = render_dancer(ap, "dance-figures", "eps")
+    if rel
+    | (block:
+        // lilypond engraves in its own working dir, so the `\image` reference
+        // must be ABSOLUTE or the figure is silently dropped from the score
+        def abs = mrkt.#{path->string}(mrkt.#{path->complete-path}(rel))
+        [set_ctxt('image $(Syntax.make(abs))',
+                  remove_from_ctxt(get_ctxt(ap), #'art_id))])
     | []
