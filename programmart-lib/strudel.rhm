@@ -168,7 +168,7 @@ meta:
 // --- dance: poses in a section's music -> a guitarHero strip + `_dance()` ---
 meta:
   // the arm_diagram poses in a section's music blocks, sorted by beat, as
-  // [start, l, r, facing-string]
+  // [start, l, r, facing-string, voice-string]
   fun section_poses(ctxt, secs):
     // find arm_diagram poses at ANY nesting depth in the section (they may be
     // inside a `dance` art var's own music/seq), carrying their merged coords
@@ -181,9 +181,14 @@ meta:
             def a = args_of(e)
             def fc = context_ref(get_ctxt(e), #'facing)
             def face = if fc | to_string(args_of(fc)[0].unwrap()) | "towards"
-            acc ++ [[s, a[0].unwrap(), a[1].unwrap(), face]]
+            acc ++ [[s, a[0].unwrap(), a[1].unwrap(), face, voice_id(e)]]
         | ~else: acc
     raw.sort(fun (x, y): x[0] < y[0])
+
+  // distinct values of `xs` in first-appearance order
+  fun distinct(xs):
+    for values(acc = []) (x in xs):
+      if acc.filter(~keep: fun (y): y == x).length() > 0 | acc | acc ++ [x]
 
   // render a section's strips (rhythm + uniform) and return its `<sid>_dance()`
   // const JS, or #false if the section has no dance
@@ -194,19 +199,25 @@ meta:
     | ~else:
         def max_start = poses[poses.length() - 1][0]
         def total = if music_total > max_start | music_total | max_start + 1
-        // frames: [start, dur, l, r, face]; dur runs to the next pose (or total)
-        def frames:
-          for List (p in poses, i in 0 ..):
-            def nxt = if i + 1 < poses.length() | poses[i + 1][0] | total
-            [p[0], nxt - p[0], p[1], p[2], p[3]]
+        // one dancer (strip row) per voice; each carries its own poses as
+        // frames [start, dur, l, r, face] (dur to the next pose in that voice)
+        def voices = distinct(poses.map(fun (p): p[4]))
+        def dancer_frames:
+          for List (vc in voices):
+            def vps = poses.filter(~keep: fun (p): p[4] == vc)
+            for List (p in vps, i in 0 ..):
+              def nxt = if i + 1 < vps.length() | vps[i + 1][0] | total
+              [p[0], nxt - p[0], p[1], p[2], p[3]]
         def dir = "strudel-figures"
         rfile.#{make-directory*}(dir)
         // write strips next to the composition ...
         def rhythm_file = dir +& "/arm-strip-" +& sid +& ".png"
         def uniform_file = dir +& "/arm-strip-" +& sid +& "-uniform.png"
-        def rkt_frames:
-          frames.map(fun (f): rkt.#{list}(f[0], f[1], f[2], f[3], rkt.#{string->symbol}(f[4])))
-        def dancers = rkt.#{list}(rkt.#{list}(& rkt_frames))
+        def dancers:
+          rkt.#{list}(& dancer_frames.map(fun (fl):
+                                            rkt.#{list}(& fl.map(fun (f):
+                                                                   rkt.#{list}(f[0], f[1], f[2], f[3],
+                                                                               rkt.#{string->symbol}(f[4]))))))
         sd.#{render-section-strip!}(dancers, total, rkt.#{string->symbol}("rhythm"), rhythm_file)
         sd.#{render-section-strip!}(dancers, total, rkt.#{string->symbol}("uniform"), uniform_file)
         // ... referenced by their strudel-served `/img/` URL, with a content-hash
@@ -214,8 +225,10 @@ meta:
         // strudel-figures/ PNGs into strudel's public/img/ before playing)
         def rhythm_url = "/img/arm-strip-" +& sid +& ".png?v=" +& sd.#{file-hash}(rhythm_file)
         def uniform_url = "/img/arm-strip-" +& sid +& "-uniform.png?v=" +& sd.#{file-hash}(uniform_file)
-        def onsets = rkt.#{list}(& poses.map(fun (p): p[0]))
-        def variant = rkt.#{list}("_default", rhythm_url, uniform_url, total, onsets)
+        // guitarHero onsets: the distinct beats a pose lands on (co-beat duet
+        // dancers share a cell), sorted
+        def onsets = distinct(poses.map(fun (p): p[0]).sort(fun (a, b): a < b))
+        def variant = rkt.#{list}("_default", rhythm_url, uniform_url, total, rkt.#{list}(& onsets))
         sd.#{dance-call-js}(sid, rkt.#{list}(variant))
 
 define_realizer program_strudeler:
