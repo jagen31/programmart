@@ -10,3 +10,9 @@ doc/
 /doc/
 \#*
 .\#*
+
+# generated render/engrave output (dance figures, engraved scores, previews)
+**/program-scores/
+**/dance-figures/
+**/repl-picts/
+**/gestalt-embeds/
