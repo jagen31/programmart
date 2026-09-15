@@ -204,15 +204,16 @@ meta:
         // write strips next to the composition ...
         def rhythm_file = dir +& "/arm-strip-" +& sid +& ".png"
         def uniform_file = dir +& "/arm-strip-" +& sid +& "-uniform.png"
-        // ... but reference them by the strudel-served `/img/` URL (copy the
-        // strudel-figures/ PNGs into strudel's public/img/ before playing)
-        def rhythm_url = "/img/arm-strip-" +& sid +& ".png"
-        def uniform_url = "/img/arm-strip-" +& sid +& "-uniform.png"
         def rkt_frames:
           frames.map(fun (f): rkt.#{list}(f[0], f[1], f[2], f[3], rkt.#{string->symbol}(f[4])))
         def dancers = rkt.#{list}(rkt.#{list}(& rkt_frames))
         sd.#{render-section-strip!}(dancers, total, rkt.#{string->symbol}("rhythm"), rhythm_file)
         sd.#{render-section-strip!}(dancers, total, rkt.#{string->symbol}("uniform"), uniform_file)
+        // ... referenced by their strudel-served `/img/` URL, with a content-hash
+        // `?v=` so a re-danced strip busts the browser cache (copy the
+        // strudel-figures/ PNGs into strudel's public/img/ before playing)
+        def rhythm_url = "/img/arm-strip-" +& sid +& ".png?v=" +& sd.#{file-hash}(rhythm_file)
+        def uniform_url = "/img/arm-strip-" +& sid +& "-uniform.png?v=" +& sd.#{file-hash}(uniform_file)
         def onsets = rkt.#{list}(& poses.map(fun (p): p[0]))
         def variant = rkt.#{list}("_default", rhythm_url, uniform_url, total, onsets)
         sd.#{dance-call-js}(sid, rkt.#{list}(variant))

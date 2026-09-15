@@ -12,11 +12,20 @@
 ;; danceart's figure.
 
 (require racket/list racket/match racket/string racket/format racket/math
+         racket/file
          (prefix-in im: 2htdp/image)
          (only-in (lib "danceart/private/dance-draw.rkt") make-dancer))
 
 (provide POSE-SIZE render-section-strip! render-dance-png!
-         num->js pose-tag dance-call-js hydra-header)
+         num->js pose-tag dance-call-js hydra-header file-hash)
+
+;; a short content hash of a file, for cache-busting the emitted image URL: the
+;; browser caches by URL, so a changed strip needs a changed `?v=` or a reload
+;; shows the stale image.
+(define (file-hash path)
+  (if (file-exists? path)
+      (number->string (bitwise-and (equal-hash-code (file->bytes path)) #xffffffff) 16)
+      "0"))
 
 ;; --- pose / strip images -------------------------------------------------
 (define POSE-SIZE 280)
