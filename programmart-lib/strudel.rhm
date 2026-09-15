@@ -170,20 +170,19 @@ meta:
   // the arm_diagram poses in a section's music blocks, sorted by beat, as
   // [start, l, r, facing-string]
   fun section_poses(ctxt, secs):
+    // find arm_diagram poses at ANY nesting depth in the section (they may be
+    // inside a `dance` art var's own music/seq), carrying their merged coords
+    def poses = context_ref_all_nested(ctxt, #'arm_diagram).filter(~keep: fun (e): section_of(e, secs))
     def raw:
-      for values(acc = []) (m in musics_in_sec(ctxt, secs)):
-        for values(acc = acc) (e in embed_items(m)):
-          cond
-          | head_of(e) == #'arm_diagram:
-              def s = expr_start(e)
-              cond
-              | s:
-                  def a = args_of(e)
-                  def fc = context_ref(get_ctxt(e), #'facing)
-                  def face = if fc | to_string(args_of(fc)[0].unwrap()) | "towards"
-                  acc ++ [[s, a[0].unwrap(), a[1].unwrap(), face]]
-              | ~else: acc
-          | ~else: acc
+      for values(acc = []) (e in poses):
+        def s = expr_start(e)
+        cond
+        | s:
+            def a = args_of(e)
+            def fc = context_ref(get_ctxt(e), #'facing)
+            def face = if fc | to_string(args_of(fc)[0].unwrap()) | "towards"
+            acc ++ [[s, a[0].unwrap(), a[1].unwrap(), face]]
+        | ~else: acc
     raw.sort(fun (x, y): x[0] < y[0])
 
   // render a section's strips (rhythm + uniform) and return its `<sid>_dance()`
