@@ -1,0 +1,240 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// programmart -- the Strudel realizer.
+//
+// `program_strudel` renders a program (the same shape `program_performer`
+// and `program_scribbler` consume: `section` name-coords with `music` /
+// `script` embeddings, `art_title`s, and raw `strudel` blocks) into a
+// Strudel program STRING -- a port of tonart's `program-strudel-realizer`.
+//
+// Each `section` becomes:
+//   - one `const <sid>_<voice> = stack(<timecats>).slow(N)` per voice
+//   - one `const <sid>_x<i> = <raw strudel>` per embedded `strudel "..."`
+//   - a live gain knob `let <sid>_g = 0`
+//   - a `const <sid>_scene = () => {...}` that mutes every other section
+//     and unmutes this one (and sets the page background to its `bg`)
+//   - a `$:` play line gated on `<sid>_g`
+//
+// Notes convert exactly as tonart's `note->timecat`: a note at [s,e] in a
+// section of length L becomes `timecat([s, silence], [e-s, note("..").s(inst)],
+// [L-e, silence])`, with instrument / volume read from the surrounding
+// `music` body (where `rewrite_in_music: instrument "..."` injects them).
+//
+// NOT PORTED (yet): the hydra dance visual -- arm-diagram pose PNGs, the
+// per-section scrolling "playback strip" (`guitarHero`), the `rect` glsl
+// letterbox, and the image-publishing side effects.  That is a large
+// 2htdp/image + hydra subsystem in the original (~800 lines); this port
+// covers the audible half -- the music, instruments, and raw strudel --
+// so a dance program plays.  A section's `_scene()` here just solos it.
+// =====================================================================
+
+import:
+  programmart open
+  lib("tonart4/main.rhm") open        // note, music, voice, volume, divisions
+  meta:
+    lib("racket/base.rkt") as rkt
+    lib("racket/string.rkt") as rstr
+
+export:
+  strudel instrument
+  program_strudeler
+
+// raw strudel dropped into a section's scene; emitted verbatim
+define_object strudel        // strudel "s(\"bd*4\")"
+// per-voice (or whole-music) synth marker, read by the realizer.  Injected
+// with `rewrite_in_music: instrument "supersaw"` (optionally under `voice@`).
+define_object instrument     // instrument "supersaw"
+
+meta:
+  // --- little helpers ------------------------------------------------
+  fun jstr(s):                       // a JS double-quoted string literal
+    "\"" +& s +& "\""
+  // a number as JS: integers stay integers, everything else prints as a
+  // decimal (Strudel has no rationals, so `1/4` must become `0.25`)
+  fun numjs(x):
+    def xf = x * 1.0
+    if math.floor(xf) == xf
+    | to_string(rkt.#{inexact->exact}(xf))
+    | to_string(xf)
+  // "Look mom!" -> "Look_mom"; used to build JS identifiers from section
+  // name segments (non-alphanumeric runs collapse to one underscore)
+  fun sanitize(sym):
+    def s = to_string(sym)
+    def cleaned = rkt.#{regexp-replace*}(rkt.#{regexp}("[^A-Za-z0-9]+"), s, "_")
+    if cleaned == "" | "x" | cleaned
+  // section path (list of symbols) -> JS id; [] (no section) -> "_main"
+  fun sid_of(secs):
+    if secs.length() == 0 | "_main" | join(secs.map(sanitize), "_")
+  // a note's voice as a JS id suffix; no voice -> "voice"
+  fun voice_id(n):
+    def c = context_ref(get_ctxt(n), #'voice)
+    if c && args_of(c).length() > 0 | sanitize(args_of(c)[0].unwrap()) | "voice"
+
+  // --- per-note -> strudel timecat fragment -------------------------
+  fun acc_str(a):
+    cond
+    | a == 0: "" | a == 1: "#" | a == -1: "b" | a == 2: "x" | a == -2: "bb"
+    | a == 3: "###" | a == -3: "bbb" | a == 4: "####" | a == -4: "bbbb"
+    | ~else: ""
+  fun note_pitch(n):
+    def p = to_string(args_of(n)[0].unwrap())
+    def a = args_of(n)[1].unwrap()
+    def o = args_of(n)[2].unwrap()
+    p +& acc_str(a) +& to_string(o)
+  // one timecat string for `n`, placed at [offset+start, offset+end] within a
+  // section of total length `section_len`.  `inner` is the note's `music`
+  // body -- where `instrument` / `volume` are looked up (a surrounding lookup,
+  // so a voice-scoped `instrument` only reaches its voice's notes).
+  fun note_timecat(n, offset, section_len, inner):
+    def start = offset + (expr_start(n) || 0)
+    def e0 = expr_end(n)
+    def end = offset + (if e0 | e0 | (expr_start(n) || 0))
+    def insts = context_ref_surrounding(inner, get_ctxt(n), #'instrument)
+    def inst = if insts.length() > 0 | to_string(args_of(insts[0])[0].unwrap()) | "square"
+    def vols = context_ref_surrounding(inner, get_ctxt(n), #'volume)
+    def vol_str = if vols.length() > 0 | ".gain(" +& numjs(args_of(vols[0])[0].unwrap()) +& ")" | ""
+    def lead = if start == 0 | "" | "[" +& numjs(start) +& ", silence], "
+    def tail = if end == section_len | "" | ", [" +& numjs(section_len - end) +& ", silence]"
+    "timecat(" +& lead +& "[" +& numjs(end - start) +& ", note(" +& jstr(note_pitch(n))
+      +& ").s(" +& jstr(inst) +& ")" +& vol_str +& "]" +& tail +& ")"
+
+  // --- per-section music ------------------------------------------
+  fun musics_in_sec(ctxt, secs):
+    context_ref_all(ctxt, #'music).filter(~keep: fun (m): section_of(m, secs))
+  fun notes_of(m):
+    embed_items(m).filter(~keep: fun (e): head_of(e) == #'note)
+  // a music block's length: its last timed event's end (notes + rests), >= 1
+  fun block_len(m):
+    def timed = embed_items(m).filter(~keep: fun (e): head_of(e) == #'note || head_of(e) == #'music_rest)
+    def mx = for values(mx = 0) (e in timed):
+               def en = expr_end(e)
+               if en && en > mx | en | mx
+    if mx == 0 | 1 | mx
+  // section's non-empty music blocks
+  fun blocks_in_sec(ctxt, secs):
+    musics_in_sec(ctxt, secs).filter(~keep: fun (m): notes_of(m).length() > 0)
+  // [ [voice_str, [timecat, ...]], ... ] in first-appearance order, plus the
+  // section's total length -- blocks concatenate along time (offset advances)
+  fun voice_timecats(ctxt, secs):
+    def blocks = blocks_in_sec(ctxt, secs)
+    def total0 = for values(s = 0) (m in blocks): s + block_len(m)
+    def total = if total0 == 0 | 1 | total0
+    // fold blocks, threading the time offset in a single [offset, groups]
+    // accumulator; `groups` is the voice -> tcs pairs in appearance order
+    def st:
+      for values(st = [0, []]) (m in blocks):
+        def offset = st[0]
+        def acc = st[1]
+        def inner = embed_items(m)
+        def acc2:
+          for values(acc = acc) (n in notes_of(m)):
+            def v = voice_id(n)
+            def tc = note_timecat(n, offset, total, inner)
+            if acc.filter(~keep: fun (g): g[0] == v).length() > 0
+            | acc.map(fun (g): if g[0] == v | [v, g[1] ++ [tc]] | g)
+            | acc ++ [[v, [tc]]]
+        [offset + block_len(m), acc2]
+    [st[1], total]
+  // a section's divisions (first block that declares one), else 1
+  fun sec_divisions(ctxt, secs):
+    def ds = context_ref_all_nested(ctxt, #'divisions).filter(~keep: fun (d): section_of(d, secs))
+    if ds.length() > 0 | args_of(ds[0])[0].unwrap() | 1
+
+  // --- script -> JS comment ---------------------------------------
+  fun script_comment(sc):
+    def lines:
+      for values(acc = []) (it in (sc.group_property(#'inner) || [])):
+        cond
+        | head_of(it) == #'line:
+            acc ++ ["//   " +& rkt.#{string-upcase}(to_string(args_of(it)[0].unwrap())) +& ": " +& to_string(args_of(it)[1].unwrap())]
+        | head_of(it) == #'stage_direction:
+            acc ++ ["//   (" +& to_string(args_of(it)[0].unwrap()) +& ")"]
+        | ~else: acc
+    join(lines, "\n")
+
+  // strudel file header: init + tempo + a couple of sample banks
+  def strudel_header:
+    "// =====================================================================\n"
+      +& "// auto-generated by program_strudel (programmart)\n"
+      +& "// each section -> per-voice `stack().slow()` consts + a gain-gated\n"
+      +& "// `$:` play line + a `_scene()` that solos it.  edit any `*_g` to mix.\n"
+      +& "// =====================================================================\n\n"
+      +& "setcpm(120);\n\n"
+      +& "samples('github:tidalcycles/dirt-samples');\n"
+
+define_realizer program_strudeler:
+  fun (ctxt):
+    def secs_list = sections_by_index(ctxt)
+    def sids = for List (secs in secs_list): sid_of(secs)
+    // every section's gain-knob name -- a `_scene()` mutes them all, then
+    // unmutes its own
+    def all_gains = for List (s in sids): s +& "_g"
+    def mute_all = join(all_gains.map(fun (g): "  " +& g +& " = 0;"), "\n")
+
+    def section_blocks:
+      for List (secs in secs_list):
+        def sid = sid_of(secs)
+        def [groups, total] = voice_timecats(ctxt, secs)
+        def divs = sec_divisions(ctxt, secs)
+        def slow = total / divs
+        // per-voice consts
+        def voice_consts:
+          join(for List (g in groups):
+                 def v = g[0]
+                 def tcs = g[1]
+                 "const " +& sid +& "_" +& v +& " = stack(\n  " +& join(tcs, ",\n  ")
+                   +& ").slow(" +& numjs(slow) +& ");",
+               "\n")
+        // raw strudel embeds authored in this section
+        def raws = context_ref_all(ctxt, #'strudel).filter(~keep: fun (e): section_of(e, secs))
+        def raw_consts:
+          join(for List (r in raws, i in 0 ..):
+                 "const " +& sid +& "_x" +& to_string(i) +& " = " +& to_string(args_of(r)[0].unwrap()) +& ";",
+               "\n")
+        // section comment: title + any script
+        def title = first_string_in(ctxt, #'art_title, secs)
+        def scripts = context_ref_all(ctxt, #'script).filter(~keep: fun (e): section_of(e, secs))
+        def bg = first_string_in(ctxt, #'bg, secs)
+        def comment:
+          "// -----------------------------------------------------------\n"
+            +& "// section: " +& (if secs.length() > 0 | sec_label(secs) | "_main") +& "\n"
+            +& (if title | "// TITLE: " +& title +& "\n" | "")
+            +& join(for List (s in scripts): "// SCRIPT:\n" +& script_comment(s) +& "\n", "")
+            +& (if bg | "// BG: " +& bg +& "\n" | "")
+        // the gain knob (starts muted) and the solo scene
+        def gain_line = "let " +& sid +& "_g = 0;"
+        def bg_js = if bg | "  document.body.style.background = " +& jstr(bg) +& ";\n" | ""
+        def scene:
+          "const " +& sid +& "_scene = () => {\n" +& mute_all +& "\n"
+            +& bg_js +& "  " +& sid +& "_g = 1;\n};"
+        comment
+          +& (if voice_consts == "" | "" | voice_consts +& "\n")
+          +& (if raw_consts == "" | "" | raw_consts +& "\n")
+          +& gain_line +& "\n"
+          +& scene +& "\n"
+
+    // PLAY: one gain-gated `$:` per section, stacking its voices + raw embeds
+    def play_lines:
+      for List (secs in secs_list):
+        def sid = sid_of(secs)
+        def [groups, _] = voice_timecats(ctxt, secs)
+        def raws = context_ref_all(ctxt, #'strudel).filter(~keep: fun (e): section_of(e, secs))
+        def names = groups.map(fun (g): sid +& "_" +& g[0])
+          ++ (for List (r in raws, i in 0 ..): sid +& "_x" +& to_string(i))
+        if names.length() == 0
+        | ""
+        | "$: stack(" +& join(names, ", ") +& ").gain(" +& sid +& "_g)"
+    def play_block:
+      "// -----------------------------------------------------------\n"
+        +& "// PLAY -- every section's $: is live; gains start at 0.\n"
+        +& "// call `<section>_scene()` to solo a section.\n"
+        +& "// -----------------------------------------------------------\n"
+        +& join(play_lines.filter(~keep: fun (l): l != ""), "\n")
+
+    def scenes_menu:
+      "// SCENES: uncomment one to switch\n"
+        +& join(for List (s in sids): "// " +& s +& "_scene();", "\n")
+
+    strudel_header +& "\n" +& join(section_blocks, "\n") +& "\n"
+      +& scenes_menu +& "\n\n" +& play_block +& "\n"
