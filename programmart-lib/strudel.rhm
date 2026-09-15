@@ -35,6 +35,8 @@ import:
   meta:
     lib("racket/base.rkt") as rkt
     lib("racket/string.rkt") as rstr
+    lib("racket/file.rkt") as rfile
+    lib("programmart/private/strudel-dance.rkt") as sd  // strip + guitarHero JS
 
 export:
   strudel instrument
@@ -163,6 +165,54 @@ meta:
       +& "setcpm(120);\n\n"
       +& "samples('github:tidalcycles/dirt-samples');\n"
 
+// --- dance: poses in a section's music -> a guitarHero strip + `_dance()` ---
+meta:
+  // the arm_diagram poses in a section's music blocks, sorted by beat, as
+  // [start, l, r, facing-string]
+  fun section_poses(ctxt, secs):
+    def raw:
+      for values(acc = []) (m in musics_in_sec(ctxt, secs)):
+        for values(acc = acc) (e in embed_items(m)):
+          cond
+          | head_of(e) == #'arm_diagram:
+              def s = expr_start(e)
+              cond
+              | s:
+                  def a = args_of(e)
+                  def fc = context_ref(get_ctxt(e), #'facing)
+                  def face = if fc | to_string(args_of(fc)[0].unwrap()) | "towards"
+                  acc ++ [[s, a[0].unwrap(), a[1].unwrap(), face]]
+              | ~else: acc
+          | ~else: acc
+    raw.sort(fun (x, y): x[0] < y[0])
+
+  // render a section's strips (rhythm + uniform) and return its `<sid>_dance()`
+  // const JS, or #false if the section has no dance
+  fun section_dance_const(ctxt, secs, sid, music_total):
+    def poses = section_poses(ctxt, secs)
+    cond
+    | poses.length() == 0: #false
+    | ~else:
+        def max_start = poses[poses.length() - 1][0]
+        def total = if music_total > max_start | music_total | max_start + 1
+        // frames: [start, dur, l, r, face]; dur runs to the next pose (or total)
+        def frames:
+          for List (p in poses, i in 0 ..):
+            def nxt = if i + 1 < poses.length() | poses[i + 1][0] | total
+            [p[0], nxt - p[0], p[1], p[2], p[3]]
+        def dir = "strudel-figures"
+        rfile.#{make-directory*}(dir)
+        def rhythm_path = dir +& "/arm-strip-" +& sid +& ".png"
+        def uniform_path = dir +& "/arm-strip-" +& sid +& "-uniform.png"
+        def rkt_frames:
+          frames.map(fun (f): rkt.#{list}(f[0], f[1], f[2], f[3], rkt.#{string->symbol}(f[4])))
+        def dancers = rkt.#{list}(rkt.#{list}(& rkt_frames))
+        sd.#{render-section-strip!}(dancers, total, rkt.#{string->symbol}("rhythm"), rhythm_path)
+        sd.#{render-section-strip!}(dancers, total, rkt.#{string->symbol}("uniform"), uniform_path)
+        def onsets = rkt.#{list}(& poses.map(fun (p): p[0]))
+        def variant = rkt.#{list}("_default", rhythm_path, uniform_path, total, onsets)
+        sd.#{dance-call-js}(sid, rkt.#{list}(variant))
+
 define_realizer program_strudeler:
   fun (ctxt):
     def secs_list = sections_by_index(ctxt)
@@ -171,6 +221,16 @@ define_realizer program_strudeler:
     // unmutes its own
     def all_gains = for List (s in sids): s +& "_g"
     def mute_all = join(all_gains.map(fun (g): "  " +& g +& " = 0;"), "\n")
+
+    // per-section dance: render strips (side effect) + collect `<sid>_dance()`
+    def dance_by_sid:
+      for List (secs in secs_list):
+        def sid = sid_of(secs)
+        def [_groups, total] = voice_timecats(ctxt, secs)
+        [sid, section_dance_const(ctxt, secs, sid, total)]
+    def any_dance = dance_by_sid.filter(~keep: fun (p): p[1]).length() > 0
+    def dance_consts = join(dance_by_sid.filter(~keep: fun (p): p[1]).map(fun (p): p[1]), "\n\n")
+    fun has_dance(sid): dance_by_sid.filter(~keep: fun (p): p[0] == sid && p[1]).length() > 0
 
     def section_blocks:
       for List (secs in secs_list):
@@ -205,9 +265,11 @@ define_realizer program_strudeler:
         // the gain knob (starts muted) and the solo scene
         def gain_line = "let " +& sid +& "_g = 0;"
         def bg_js = if bg | "  document.body.style.background = " +& jstr(bg) +& ";\n" | ""
+        // a dance section pipes its scrolling pose-strip to hydra's o0
+        def dance_js = if has_dance(sid) | "  " +& sid +& "_dance().out(o0);\n" | ""
         def scene:
           "const " +& sid +& "_scene = () => {\n" +& mute_all +& "\n"
-            +& bg_js +& "  " +& sid +& "_g = 1;\n};"
+            +& bg_js +& dance_js +& "  " +& sid +& "_g = 1;\n};"
         comment
           +& (if voice_consts == "" | "" | voice_consts +& "\n")
           +& (if raw_consts == "" | "" | raw_consts +& "\n")
@@ -236,5 +298,8 @@ define_realizer program_strudeler:
       "// SCENES: uncomment one to switch\n"
         +& join(for List (s in sids): "// " +& s +& "_scene();", "\n")
 
-    strudel_header +& "\n" +& join(section_blocks, "\n") +& "\n"
+    strudel_header +& "\n"
+      +& (if any_dance | sd.#{hydra-header} +& "\n\n" | "")
+      +& (if dance_consts == "" | "" | dance_consts +& "\n\n")
+      +& join(section_blocks, "\n") +& "\n"
       +& scenes_menu +& "\n\n" +& play_block +& "\n"
