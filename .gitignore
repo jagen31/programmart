@@ -1,4 +1,12 @@
+**/compiled/*
 compiled/
-*.zo
-*.dep
-program-scores/
+**/*.bak
+*.bak
+*~
+**.rktd
+**.sxref
+.DS_Store
+doc/
+/doc/
+\#*
+.\#*
