@@ -33,6 +33,7 @@ import:
     lib("racket/base.rkt") as mrkt
     lib("programmart/private/scribble-preview.rkt") as mprev   // doc->display-list
     lib("programmart/private/dl-draw.rkt") as mdraw            // display-list->png
+    lib("tonart4/private/engrave-par.rkt") as meng            // scribble-image-tag
 
 export:
   program_scribbler
@@ -296,7 +297,10 @@ meta:
   // of the render cache (drilling into nested programs must not repaint the
   // same unchanged program every time)
   fun content_hash(s):
+    // also fold in the CONTENT of the score PNGs `s` references by path, so a
+    // redrawn figure (same path, new bytes) invalidates the render cache
     to_string(s.length()) +& "x" +& to_string(mrkt.#{abs}(mrkt.#{equal-hash-code}(s)))
+      +& "-" +& meng.#{scribble-image-tag}(s)
   fun render_program_png(source, dir, prefix):
     mfile.#{make-directory*}(dir)
     def name = prefix +& "-" +& content_hash(source)
